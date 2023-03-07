@@ -33,6 +33,21 @@ float EuclideanDistance(const vector<float> &lhs, const vector<float> &rhs) {
   return ans;
 }
 
+template<class T>
+struct BoundedHeap {
+    vector<T>& items;
+
+    BoundedHeap(vector<T>& items, uint32_t maxItems = 100): items(items) {
+        std::make_heap(items.begin(), items.end());
+    }
+
+    void insert(T t) {
+
+    }
+
+
+};
+
 vector<uint32_t> CalculateOneKnn(const vector<vector<float>> &data,
                                  const vector<uint32_t> &sample_indexes,
                                  const uint32_t id) {
