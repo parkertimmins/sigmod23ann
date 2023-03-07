@@ -25,7 +25,6 @@ void SaveKNNG(const std::vector<std::vector<uint32_t>> &knng,
               const std::string &path = "output.bin") {
   std::ofstream ofs(path, std::ios::out | std::ios::binary);
   const int K = 100;
-  const uint32_t N = knng.size();
   std::cout << "Saving KNN Graph (" << knng.size() << " X 100) to " << path
             << std::endl;
   assert(knng.front().size() == K);

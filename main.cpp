@@ -2,6 +2,7 @@
 #include <fstream>
 #include <numeric>
 #include <string>
+#include <utility>
 #include <vector>
 #include <cassert>
 #include <algorithm>
@@ -10,6 +11,9 @@
 #include <unordered_map>
 #include <cstdint>
 #include <chrono>
+#include <thread>
+#include <optional>
+#include <mutex>
 #include "io.h"
 
 
@@ -190,9 +194,35 @@ void constructResultActual(const vector<Vec>& data, vector<vector<uint32_t>>& re
     }
 }*/
 
+template<class T>
+struct Task {
+    vector<T> tasks;
+    std::mutex mtx;
+
+    Task(vector<T> tasks): tasks(std::move(tasks)) {}
+
+    std::optional<T> getTask() {
+        std::lock_guard lock(mtx);
+        if (!tasks.empty()) {
+            T item = tasks.back();
+            tasks.pop_back();
+            return { item };
+        }
+        return {};
+    }
+};
+
+template<class K, class V>
+vector<K> getKeys(std::unordered_map<K, V>& map) {
+    vector<K> keys;
+    for(const auto& kv : map) {
+        keys.push_back(kv.first);
+    }
+    return keys;
+}
 
 // num groups == 1 << 7 == 128 => expected items per group ~ 7000
-int numGroupBits = 7;
+uint32_t numGroupBits = 7;
 void constructResult(const vector<Vec>& data, vector<vector<uint32_t>>& result) {
 
     vector<Vec> randVecs;
@@ -217,33 +247,50 @@ void constructResult(const vector<Vec>& data, vector<vector<uint32_t>>& result) 
     std::cout << groups.size() << std::endl;
 
     result.resize(data.size());
-    int count = 0;
 
+    std::atomic<uint64_t> count = 0;
     auto startTime = high_resolution_clock::now();
     auto start10k = high_resolution_clock::now();
-    for (auto& kv : groups) {
-        const auto& group = kv.second;
-        std::cout << "group size: : " << group.size() << std::endl;
 
-        for (auto& id : group) {
-            result[id] = CalculateOneKnn(data, group, id);
+    Task<uint64_t> tasks(getKeys(groups));
 
-            if (count % 10'000 == 0) {
-                auto currentTime = high_resolution_clock::now();
-                auto durationGroup = duration_cast<milliseconds>(currentTime - start10k);
-                auto durationTotal = duration_cast<milliseconds>(currentTime - startTime);
+    auto numThreads = std::thread::hardware_concurrency();
+    std::vector<std::thread> threads;
 
-                auto percentDone = static_cast<float>(count) / data.size();
-                auto estimatedRequiredSec = (durationTotal.count() / percentDone) / 1000;
+    for (uint32_t t = 0; t < numThreads; ++t) {
+        threads.emplace_back([&]() {
+            std::optional<uint64_t> sig = tasks.getTask();
 
-                std::cout << "completed: " << count << ", 10k time (ms): " << durationGroup.count()
-                    << ", total time: " << durationTotal.count() << std::endl;
-                std::cout << "estimated completion time (s): " << estimatedRequiredSec << std::endl;
-                start10k = currentTime;
+            while (sig) {
+                const auto& group = groups[*sig];
+//                std::cout << "group size: : " << group.size() << std::endl;
+                for (auto& id : group) {
+                    result[id] = CalculateOneKnn(data, group, id);
 
+                    auto localCount = count++;
+                    if (localCount % 10'000 == 0) {
+                        auto currentTime = high_resolution_clock::now();
+                        auto durationGroup = duration_cast<milliseconds>(currentTime - start10k);
+                        auto durationTotal = duration_cast<milliseconds>(currentTime - startTime);
+
+                        auto percentDone = static_cast<float>(localCount) / data.size();
+                        auto estimatedRequiredSec = (durationTotal.count() / percentDone) / 1000;
+
+                        std::cout << "completed: " << localCount << ", 10k time (ms): " << durationGroup.count()
+                            << ", total time: " << durationTotal.count() << std::endl;
+                        std::cout << "estimated completion time (s): " << estimatedRequiredSec << std::endl;
+                        start10k = currentTime;
+
+                    }
+                }
+
+                sig = tasks.getTask();
             }
-            count++;
-        }
+        });
+    }
+
+    for (auto& thread: threads) {
+        thread.join();
     }
 
     vector<uint32_t> sizes(101);
