@@ -38,6 +38,9 @@ using Vec = vector<float>;
  * Docs used
  * https://www.pinecone.io/learn/locality-sensitive-hashing-random-projection/
  * https://en.wikipedia.org/wiki/Locality-sensitive_hashing
+ * http://infolab.stanford.edu/~ullman/mining/2009/similarity3.pdf
+ * http://infolab.stanford.edu/~ullman/mining/pdf/cs345-lsh.pdf
+ * http://infolab.stanford.edu/~ullman/mining/2008/slides/cs345-lsh.pdf
  */
 
 float distance(const Vec &lhs, const Vec &rhs) {
@@ -143,7 +146,7 @@ vector<uint32_t> CalculateOneKnn(const vector<vector<float>> &data,
 
         // only keep the top 100
         if (top_candidates.size() < 100 || dist < lower_bound) {
-            top_candidates.push(std::make_pair(dist, i));
+            top_candidates.push(std::make_pair(dist, sample_id));
             if (top_candidates.size() > 100) {
                 top_candidates.pop();
             }
@@ -160,7 +163,6 @@ vector<uint32_t> CalculateOneKnn(const vector<vector<float>> &data,
     std::reverse(knn.begin(), knn.end());
     return knn;
 }
-/*
 void constructResultActual(const vector<Vec>& data, vector<vector<uint32_t>>& result) {
 
     result.resize(data.size());
@@ -169,44 +171,37 @@ void constructResultActual(const vector<Vec>& data, vector<vector<uint32_t>>& re
     vector<uint32_t> sample_indexes(data.size());
     iota(sample_indexes.begin(), sample_indexes.end(), 0);
 
+    auto numThreads = std::thread::hardware_concurrency();
+    std::vector<std::thread> threads;
+
     for (int i = 0; i < data.size(); ++i) {
         result[i] = CalculateOneKnn(data, sample_indexes, i);
-
-        if (count % 10'000 == 0) {
-            auto currentTime = high_resolution_clock::now();
-            auto duration = duration_cast<milliseconds>(currentTime - startTime);
-            std::cout << "completed: " << count << ", duration (ms): " << duration.count() << std::endl;
-            startTime = currentTime;
-        }
-        count++;
     }
+
+
 
     vector<uint32_t> sizes(101);
     for (uint32_t i=0; i < data.size(); ++i) {
         sizes[result[i].size()]++;
-        while (result[i].size() < 100)  {
-            result[i].push_back(1);
-        }
     }
-
     for (uint32_t i=0; i < sizes.size(); ++i) {
         std::cout << "size: " << i << ", count: " << sizes[i] << std::endl;
     }
-}*/
+}
 
 template<class T>
 struct Task {
     vector<T> tasks;
-    std::mutex mtx;
+    std::atomic<uint64_t> index = 0;
 
-    Task(vector<T> tasks): tasks(std::move(tasks)) {}
+    explicit Task(vector<T> tasks): tasks(std::move(tasks)) {}
 
     std::optional<T> getTask() {
-        std::lock_guard lock(mtx);
-        if (!tasks.empty()) {
-            T item = tasks.back();
-            tasks.pop_back();
-            return { item };
+        auto curr = index.load();
+        while (curr < tasks.size()) {
+            if (index.compare_exchange_strong(curr, curr + 1)) {
+                return { tasks[curr] };
+            }
         }
         return {};
     }
@@ -221,9 +216,21 @@ vector<K> getKeys(std::unordered_map<K, V>& map) {
     return keys;
 }
 
+
+// 2 groups: 0.9281
+// 4653
+// 5347
+
+
+// 4 groups: 1.0125
+// 2243 + 2410
+// 2770 + 2577
+
 // num groups == 1 << 7 == 128 => expected items per group ~ 7000
-uint32_t numGroupBits = 7;
+uint32_t numGroupBits = 0;
 void constructResult(const vector<Vec>& data, vector<vector<uint32_t>>& result) {
+
+    std::cout << "expected group size: "  << data.size() / (1<<numGroupBits) << std::endl;
 
     vector<Vec> randVecs;
     while (randVecs.size() < numGroupBits) {
@@ -263,7 +270,7 @@ void constructResult(const vector<Vec>& data, vector<vector<uint32_t>>& result) 
 
             while (sig) {
                 const auto& group = groups[*sig];
-//                std::cout << "group size: : " << group.size() << std::endl;
+                std::cout << "group size: : " << group.size() << std::endl;
                 for (auto& id : group) {
                     result[id] = CalculateOneKnn(data, group, id);
 
@@ -293,11 +300,12 @@ void constructResult(const vector<Vec>& data, vector<vector<uint32_t>>& result) 
         thread.join();
     }
 
+    auto unusedId = 1;
     vector<uint32_t> sizes(101);
     for (uint32_t i=0; i < data.size(); ++i) {
         sizes[result[i].size()]++;
         while (result[i].size() < 100)  {
-            result[i].push_back(1);
+            result[i].push_back(unusedId);
         }
     }
 

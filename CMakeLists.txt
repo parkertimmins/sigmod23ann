@@ -8,3 +8,5 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -Wall -Wextra -fno-omit-frame-poin
 
 
 add_executable(sigmod23ann main.cpp)
+
+add_executable(grader grade.cpp)
