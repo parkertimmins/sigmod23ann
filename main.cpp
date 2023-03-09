@@ -14,11 +14,12 @@
 #include <thread>
 #include <optional>
 #include <mutex>
+#include <limits>
 #include "io.h"
 
 
 #include <immintrin.h>
-
+using namespace std;
 
 using std::cout;
 using std::endl;
@@ -30,7 +31,6 @@ using std::chrono::duration;
 using std::chrono::milliseconds;
 using Vec = vector<float>;
 
-#define _INT_MAX 2147483640
 
 
 
@@ -41,7 +41,32 @@ using Vec = vector<float>;
  * http://infolab.stanford.edu/~ullman/mining/2009/similarity3.pdf
  * http://infolab.stanford.edu/~ullman/mining/pdf/cs345-lsh.pdf
  * http://infolab.stanford.edu/~ullman/mining/2008/slides/cs345-lsh.pdf
+ * https://users.cs.utah.edu/~jeffp/teaching/cs5955/L6-LSH.pdf
+ * http://infolab.stanford.edu/~ullman/mmds/ch3.pdf
+ * http://web.mit.edu/andoni/www/papers/cSquared.pdf
+ * https://courses.engr.illinois.edu/cs498abd/fa2020/slides/14-lec.pdf
  */
+
+uint32_t numProjections = 3;
+uint8_t numBuckets = 4; //std::numeric_limits<unsigned char>::max();
+
+template<class T>
+struct Task {
+    vector<T> tasks;
+    std::atomic<uint64_t> index = 0;
+
+    explicit Task(vector<T> tasks): tasks(std::move(tasks)) {}
+
+    std::optional<T> getTask() {
+        auto curr = index.load();
+        while (curr < tasks.size()) {
+            if (index.compare_exchange_strong(curr, curr + 1)) {
+                return { tasks[curr] };
+            }
+        }
+        return {};
+    }
+};
 
 float distance(const Vec &lhs, const Vec &rhs) {
     float ans = 0.0;
@@ -103,17 +128,45 @@ float distance256(const Vec &lhs, const Vec &rhs) {
     return ans;
 }
 
+float norm(Vec& vec) {
+    float sumSquares = 0.0;
+    for (auto& v : vec) {
+        sumSquares += (v * v);
+    }
+    return sqrt(sumSquares);
+}
+
+
 std::default_random_engine rd(123);
-vector<float> makeRandoms(size_t len=100) {
+vector<float> randUniformUnitVec(size_t dim=100) {
     std::mt19937 gen(rd());
-    std::uniform_real_distribution<> dist(-1.0, 1.0);
+    std::normal_distribution<> normalDist(0, 1);
 
     Vec randVec;
-    randVec.reserve(len);
-    while (randVec.size() < len) {
-        randVec.emplace_back(dist(gen));
+    randVec.reserve(dim);
+    while (randVec.size() < dim) {
+        auto elementValue = normalDist(gen);
+        randVec.emplace_back(elementValue);
+    }
+
+    // make unit vector just for good measure
+    float vecNorm = norm(randVec);
+    for (float& v : randVec) {
+        v = v / vecNorm;
     }
     return randVec;
+}
+
+
+
+
+
+Vec scalerMult(float c, const Vec& vec) {
+    Vec result;
+    for (auto& v : vec) {
+        result.push_back(v * c);
+    }
+    return result;
 }
 
 float dot(const Vec& lhs, const Vec& rhs) {
@@ -134,13 +187,23 @@ uint64_t projectRandoms(const vector<Vec>& randVecs, const Vec& values) {
     return projection; 
 }
 
+// onto unit vector
+Vec project(const Vec& randUnit, const Vec& vec) {
+    return scalerMult(dot(randUnit, vec), randUnit);
+}
+
+uint64_t alpha = 10;
+uint64_t makeSignature(const Vec& randUnit, const Vec& vec) {
+    return dot(randUnit, vec) / alpha;
+}
+
+
 vector<uint32_t> CalculateOneKnn(const vector<vector<float>> &data,
                                  const vector<uint32_t> &sample_indexes,
                                  const uint32_t id) {
     std::priority_queue<std::pair<float, uint32_t>> top_candidates;
-    float lower_bound = _INT_MAX;
-    for (unsigned i = 0; i < sample_indexes.size(); i++) {
-        uint32_t sample_id = sample_indexes[i];
+    float lower_bound = std::numeric_limits<float>::max();
+    for (unsigned int sample_id : sample_indexes) {
         if (id == sample_id) continue;  // skip itself.
         float dist = distance128(data[id], data[sample_id]);
 
@@ -163,10 +226,11 @@ vector<uint32_t> CalculateOneKnn(const vector<vector<float>> &data,
     std::reverse(knn.begin(), knn.end());
     return knn;
 }
+
+
 void constructResultActual(const vector<Vec>& data, vector<vector<uint32_t>>& result) {
 
     result.resize(data.size());
-    int count = 0;
 
     vector<uint32_t> sample_indexes(data.size());
     iota(sample_indexes.begin(), sample_indexes.end(), 0);
@@ -174,11 +238,26 @@ void constructResultActual(const vector<Vec>& data, vector<vector<uint32_t>>& re
     auto numThreads = std::thread::hardware_concurrency();
     std::vector<std::thread> threads;
 
-    for (int i = 0; i < data.size(); ++i) {
-        result[i] = CalculateOneKnn(data, sample_indexes, i);
+    Task<uint32_t> tasks(sample_indexes);
+
+    for (uint32_t t = 0; t < numThreads; ++t) {
+        threads.emplace_back([&]() {
+            std::optional<uint32_t> id = tasks.getTask();
+
+            while (id) {
+                result[*id] = CalculateOneKnn(data, sample_indexes, *id);
+
+                if (*id % 100 == 0) {
+                    std::cout << "completed: " << *id << std::endl;
+                }
+                id = tasks.getTask();
+            }
+        });
     }
 
-
+    for (auto& thread: threads) {
+        thread.join();
+    }
 
     vector<uint32_t> sizes(101);
     for (uint32_t i=0; i < data.size(); ++i) {
@@ -189,23 +268,7 @@ void constructResultActual(const vector<Vec>& data, vector<vector<uint32_t>>& re
     }
 }
 
-template<class T>
-struct Task {
-    vector<T> tasks;
-    std::atomic<uint64_t> index = 0;
 
-    explicit Task(vector<T> tasks): tasks(std::move(tasks)) {}
-
-    std::optional<T> getTask() {
-        auto curr = index.load();
-        while (curr < tasks.size()) {
-            if (index.compare_exchange_strong(curr, curr + 1)) {
-                return { tasks[curr] };
-            }
-        }
-        return {};
-    }
-};
 
 template<class K, class V>
 vector<K> getKeys(std::unordered_map<K, V>& map) {
@@ -217,49 +280,104 @@ vector<K> getKeys(std::unordered_map<K, V>& map) {
 }
 
 
-// 2 groups: 0.9281
-// 4653
-// 5347
 
-
-// 4 groups: 1.0125
-// 2243 + 2410
-// 2770 + 2577
-
-// num groups == 1 << 7 == 128 => expected items per group ~ 7000
-uint32_t numGroupBits = 0;
-void constructResult(const vector<Vec>& data, vector<vector<uint32_t>>& result) {
-
-    std::cout << "expected group size: "  << data.size() / (1<<numGroupBits) << std::endl;
-
+vector<Vec> buildProjectionVecs(auto n) {
     vector<Vec> randVecs;
-    while (randVecs.size() < numGroupBits) {
-        auto randv = makeRandoms();
-        randVecs.push_back(randv);
+    while (randVecs.size() < n) {
+        randVecs.push_back(randUniformUnitVec(100));
     }
-    
-    std::unordered_map<uint64_t, vector<uint32_t>> groups;
+    return randVecs;
+}
 
-    // load vectors in map
-    for (uint32_t i = 0, len=data.size(); i < len; ++i) {
-        if (i % 100'000 == 0) std::cout << "inserted: " << i << std::endl;
 
-        uint64_t signature = projectRandoms(randVecs, data[i]);
-        if (groups.find(signature) == groups.end()) {
-            groups[signature] = { i };
-        } else {
-            groups[signature].push_back(i);
+// projId -> tupleId -> projection value
+vector<vector<float>> projections;
+
+// projId -> tupleId -> bucket
+vector<vector<uint8_t>> buckets;
+
+// projId -> bucketId -> [tuples]
+vector<vector<vector<uint32_t>>> bucketToTuples;
+
+// tupleId -> projId -> bucketId
+ vector<vector<uint8_t>> pointToBucket;
+// tupleId -> signature
+vector<uint64_t> pointToSig;
+
+// projId -> (min, max)
+vector<float> projMins;
+vector<float> projMaxs;
+
+void constructResult(const vector<Vec>& points, vector<vector<uint32_t>>& result) {
+    uint32_t numPoints = points.size();
+
+
+    vector<Vec> projVecs = buildProjectionVecs(numProjections);
+
+    projMins.resize(numProjections, std::numeric_limits<float>::max());
+    projMaxs.resize(numProjections, std::numeric_limits<float>::min());
+    projections.resize(numProjections);
+    buckets.resize(numProjections);
+    bucketToTuples.resize(numProjections);
+    for (uint32_t projId = 0; projId < numProjections; ++projId) {
+        bucketToTuples[projId].resize(numBuckets);
+    }
+    pointToBucket.resize(numPoints);
+    for (uint32_t p = 0; p < numPoints; ++p) {
+        pointToBucket[p].resize(numProjections);
+    }
+    pointToSig.resize(numPoints);
+
+
+    for (uint32_t projId = 0; projId < numProjections; ++projId) {
+        for (uint32_t ptId = 0; ptId < numPoints; ++ptId) {
+            float proj = dot(projVecs[projId], points[ptId]);
+            if (proj < projMins[projId]) projMins[projId] = proj;
+            if (proj > projMaxs[projId]) projMaxs[projId] = proj;
+            projections[projId].push_back(proj);
         }
     }
-    std::cout << groups.size() << std::endl;
 
-    result.resize(data.size());
+    for (uint32_t ptId = 0; ptId < numPoints; ++ptId) {
+        uint64_t sig = 0;
+        for (uint32_t projId = 0; projId < numProjections; ++projId) {
+            float width = projMaxs[projId] - projMins[projId];
+            float minProj = projMins[projId];
+            float proj = projections[projId][ptId];
+            float percRange = (proj - minProj) / width;
+            uint8_t bucket = percRange * (numBuckets - 1);
+//            std::cout << proj << " " << width << " " << percRange << " "  << static_cast<uint64_t>(bucket) << std::endl;
+            sig <<= 2; // log2(maxBuckets)
+            sig |= bucket;
+
+            pointToBucket[ptId][projId] = bucket;
+            buckets[projId].push_back(bucket);
+            bucketToTuples[projId][bucket].push_back(ptId);
+        }
+        pointToSig[ptId] = sig;
+    }
+
+
+    std::unordered_map<uint64_t, vector<uint32_t>> sigToPoints;
+    for (uint32_t ptId = 0; ptId < numPoints; ++ptId) {
+        auto sig = pointToSig[ptId];
+        if (sigToPoints.find(sig) == sigToPoints.end()) {
+            sigToPoints[sig] = { ptId };
+        } else {
+            sigToPoints[sig].push_back(ptId);
+        }
+    }
+
+
+    std::cout << "num groups: " << sigToPoints.size() << std::endl;
+
+    result.resize(points.size());
 
     std::atomic<uint64_t> count = 0;
     auto startTime = high_resolution_clock::now();
     auto start10k = high_resolution_clock::now();
 
-    Task<uint64_t> tasks(getKeys(groups));
+    Task<uint64_t> tasks(getKeys(sigToPoints));
 
     auto numThreads = std::thread::hardware_concurrency();
     std::vector<std::thread> threads;
@@ -269,10 +387,10 @@ void constructResult(const vector<Vec>& data, vector<vector<uint32_t>>& result) 
             std::optional<uint64_t> sig = tasks.getTask();
 
             while (sig) {
-                const auto& group = groups[*sig];
+                const auto& group = sigToPoints[*sig];
                 std::cout << "group size: : " << group.size() << std::endl;
                 for (auto& id : group) {
-                    result[id] = CalculateOneKnn(data, group, id);
+                    result[id] = CalculateOneKnn(points, group, id);
 
                     auto localCount = count++;
                     if (localCount % 10'000 == 0) {
@@ -280,7 +398,7 @@ void constructResult(const vector<Vec>& data, vector<vector<uint32_t>>& result) 
                         auto durationGroup = duration_cast<milliseconds>(currentTime - start10k);
                         auto durationTotal = duration_cast<milliseconds>(currentTime - startTime);
 
-                        auto percentDone = static_cast<float>(localCount) / data.size();
+                        auto percentDone = static_cast<float>(localCount) / points.size();
                         auto estimatedRequiredSec = (durationTotal.count() / percentDone) / 1000;
 
                         std::cout << "completed: " << localCount << ", 10k time (ms): " << durationGroup.count()
@@ -302,7 +420,7 @@ void constructResult(const vector<Vec>& data, vector<vector<uint32_t>>& result) 
 
     auto unusedId = 1;
     vector<uint32_t> sizes(101);
-    for (uint32_t i=0; i < data.size(); ++i) {
+    for (uint32_t i=0; i < points.size(); ++i) {
         sizes[result[i].size()]++;
         while (result[i].size() < 100)  {
             result[i].push_back(unusedId);
@@ -325,7 +443,6 @@ int main(int argc, char **argv) {
   // Read data points
   vector<vector<float>> nodes;
   ReadBin(source_path, nodes);
-
 
   // Knng constuction
   vector<vector<uint32_t>> knng;
