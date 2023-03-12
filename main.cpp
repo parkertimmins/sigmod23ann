@@ -483,8 +483,20 @@ vector<pair<float, uint32_t>> splitInTwo(vector<pair<float, uint32_t>>& group1) 
     return group2;
 }
 
+
+template<class T>
+void print(vector<T> ts) {
+    for (char i: ts)
+        std::cout << i << ", ";
+    std::cout << std::endl;
+}
+
+
 vector<pair<float, uint32_t>> splitGroup(vector<pair<float, uint32_t>>& group, const vector<Vec>& points) {
     auto u = randUniformUnitVec(100);
+    std::cout << "split group, size: " << group.size() << std::endl;
+//    std::cout << "unit vec"; print(u);
+
     for (auto& p : group) {
         p.first = dot(u, points[p.second]);
     }
@@ -492,8 +504,20 @@ vector<pair<float, uint32_t>> splitGroup(vector<pair<float, uint32_t>>& group, c
     return splitInTwo(group);
 }
 
+void splitRecursiveSingleThreaded(const vector<Vec>& points,vector<pair<float, uint32_t>>& group, vector<vector<pair<float, uint32_t>>>& allGroups) {
+    uint64_t maxGroupSize = 5000;
+    if (group.size() < maxGroupSize) {
+        allGroups.push_back(group);
+    } else {
+        // modify group in place
+        auto otherGroup = splitGroup(group, points);
+        splitRecursiveSingleThreaded(points, group, allGroups);
+        splitRecursiveSingleThreaded(points, otherGroup, allGroups);
+    }
+}
+
 void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>>& result) {
-    uint64_t maxGroupSize = 8000;
+    uint64_t maxGroupSize = 5000; // 10m / 2^i == 4882 for some i
 
     vector<pair<float, uint32_t>> group1;
     auto numPoints = points.size();
@@ -505,24 +529,30 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
     }
     sort(group1.begin(), group1.end());
 
-    queue<vector<pair<float, uint32_t>>> groups;
-    groups.push(group1);
+    vector<vector<pair<float, uint32_t>>> groups;
+    splitRecursiveSingleThreaded(points, group1, groups);
 
-    atomic<uint64_t> count = 0;
-    while (!groups.empty()) {
-        auto grp1 = groups.front(); groups.pop();
-        if (grp1.size() < maxGroupSize) {
-            for (auto& [hash, id]: grp1) {
-                result[id] = CalculateOneKnn2(points, grp1, id);
-                if (count++ % 10'000 == 0) {
-                    std::cout << "competed: " << count << std::endl;
+    auto numThreads = std::thread::hardware_concurrency();
+    std::vector<std::thread> threads;
+
+    Task<vector<pair<float, uint32_t>>> tasks(groups);
+
+    for (uint32_t t = 0; t < numThreads; ++t) {
+        threads.emplace_back([&]() {
+            auto optGroup = tasks.getTask();
+
+            while (optGroup) {
+                auto& grp = *optGroup;
+                for (auto& [hash, id]: grp) {
+                    result[id] = CalculateOneKnn2(points, grp, id);
                 }
+                optGroup = tasks.getTask();
             }
-        } else {
-            auto grp2 = splitGroup(grp1, points);
-            groups.push(std::move(grp1));
-            groups.push(std::move(grp2));
-        }
+        });
+    }
+
+    for (auto& thread: threads) {
+        thread.join();
     }
 
     auto sizes = padResult(points, result);
@@ -530,6 +560,9 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
         std::cout << "size: " << i << ", count: " << sizes[i] << std::endl;
     }
 }
+
+
+
 
 
 int main(int argc, char **argv) {
