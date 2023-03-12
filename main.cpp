@@ -15,6 +15,7 @@
 #include <optional>
 #include <mutex>
 #include <limits>
+#include <queue>
 #include "io.h"
 
 
@@ -45,9 +46,11 @@ using Vec = vector<float>;
  * http://infolab.stanford.edu/~ullman/mmds/ch3.pdf
  * http://web.mit.edu/andoni/www/papers/cSquared.pdf
  * https://courses.engr.illinois.edu/cs498abd/fa2020/slides/14-lec.pdf
+ * https://www.youtube.com/watch?v=yIkyeackISs&ab_channel=SimonsInstitute
+ * https://arxiv.org/abs/1501.01062
  */
 
-uint32_t numProjections = 3;
+uint32_t numProjections = 4;
 uint8_t numBuckets = 4; //std::numeric_limits<unsigned char>::max();
 
 template<class T>
@@ -227,6 +230,34 @@ vector<uint32_t> CalculateOneKnn(const vector<vector<float>> &data,
     return knn;
 }
 
+vector<uint32_t> CalculateOneKnn2(const vector<vector<float>> &data,
+                                 const vector<pair<float, uint32_t>> &sample_indexes,
+                                 const uint32_t id) {
+    std::priority_queue<std::pair<float, uint32_t>> top_candidates;
+    float lower_bound = std::numeric_limits<float>::max();
+    for (auto& [hash, sample_id]: sample_indexes) {
+        if (id == sample_id) continue;  // skip itself.
+        float dist = distance128(data[id], data[sample_id]);
+
+        // only keep the top 100
+        if (top_candidates.size() < 100 || dist < lower_bound) {
+            top_candidates.push(std::make_pair(dist, sample_id));
+            if (top_candidates.size() > 100) {
+                top_candidates.pop();
+            }
+
+            lower_bound = top_candidates.top().first;
+        }
+    }
+
+    vector<uint32_t> knn;
+    while (!top_candidates.empty()) {
+        knn.emplace_back(top_candidates.top().second);
+        top_candidates.pop();
+    }
+    std::reverse(knn.begin(), knn.end());
+    return knn;
+}
 
 void constructResultActual(const vector<Vec>& data, vector<vector<uint32_t>>& result) {
 
@@ -292,18 +323,14 @@ vector<Vec> buildProjectionVecs(auto n) {
 
 // projId -> tupleId -> projection value
 vector<vector<float>> projections;
-
 // projId -> tupleId -> bucket
 vector<vector<uint8_t>> buckets;
-
 // projId -> bucketId -> [tuples]
 vector<vector<vector<uint32_t>>> bucketToTuples;
-
 // tupleId -> projId -> bucketId
  vector<vector<uint8_t>> pointToBucket;
 // tupleId -> signature
 vector<uint64_t> pointToSig;
-
 // projId -> (min, max)
 vector<float> projMins;
 vector<float> projMaxs;
@@ -432,6 +459,79 @@ void constructResult(const vector<Vec>& points, vector<vector<uint32_t>>& result
     }
 }
 
+
+vector<uint32_t> padResult(const vector<Vec>& points, vector<vector<uint32_t>>& result) {
+    auto unusedId = 1;
+    vector<uint32_t> sizes(101);
+    for (uint32_t i=0; i < points.size(); ++i) {
+        sizes[result[i].size()]++;
+        while (result[i].size() < 100)  {
+            result[i].push_back(unusedId);
+        }
+    }
+    return sizes;
+}
+
+// assume sorted
+vector<pair<float, uint32_t>> splitInTwo(vector<pair<float, uint32_t>>& group1) {
+    vector<pair<float, uint32_t>> group2;
+    uint32_t half = group1.size() / 2;
+    while (group2.size() < half) {
+        group2.push_back(group1.back());
+        group1.pop_back();
+    }
+    return group2;
+}
+
+vector<pair<float, uint32_t>> splitGroup(vector<pair<float, uint32_t>>& group, const vector<Vec>& points) {
+    auto u = randUniformUnitVec(100);
+    for (auto& p : group) {
+        p.first = dot(u, points[p.second]);
+    }
+    sort(group.begin(), group.end());
+    return splitInTwo(group);
+}
+
+void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>>& result) {
+    uint64_t maxGroupSize = 8000;
+
+    vector<pair<float, uint32_t>> group1;
+    auto numPoints = points.size();
+    auto u = randUniformUnitVec(100);
+    for (uint32_t i = 0; i < numPoints; ++i) {
+        auto& v = points[i];
+        float hash = dot(u, v);
+        group1.emplace_back(hash, i);
+    }
+    sort(group1.begin(), group1.end());
+
+    queue<vector<pair<float, uint32_t>>> groups;
+    groups.push(group1);
+
+    atomic<uint64_t> count = 0;
+    while (!groups.empty()) {
+        auto grp1 = groups.front(); groups.pop();
+        if (grp1.size() < maxGroupSize) {
+            for (auto& [hash, id]: grp1) {
+                result[id] = CalculateOneKnn2(points, grp1, id);
+                if (count++ % 10'000 == 0) {
+                    std::cout << "competed: " << count << std::endl;
+                }
+            }
+        } else {
+            auto grp2 = splitGroup(grp1, points);
+            groups.push(std::move(grp1));
+            groups.push(std::move(grp2));
+        }
+    }
+
+    auto sizes = padResult(points, result);
+    for (uint32_t i=0; i < sizes.size(); ++i) {
+        std::cout << "size: " << i << ", count: " << sizes[i] << std::endl;
+    }
+}
+
+
 int main(int argc, char **argv) {
   string source_path = "dummy-data.bin";
 
@@ -445,8 +545,8 @@ int main(int argc, char **argv) {
   ReadBin(source_path, nodes);
 
   // Knng constuction
-  vector<vector<uint32_t>> knng;
-  constructResult(nodes, knng);
+  vector<vector<uint32_t>> knng(nodes.size());
+  constructResultSplitting(nodes, knng);
 
   // Save to ouput.bin
   SaveKNNG(knng);
