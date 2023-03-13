@@ -9,6 +9,7 @@
 #include <queue>
 #include <random>
 #include <unordered_map>
+#include <unordered_set>
 #include <cstdint>
 #include <chrono>
 #include <thread>
@@ -172,7 +173,30 @@ Vec scalerMult(float c, const Vec& vec) {
     return result;
 }
 
-float dot(const Vec& lhs, const Vec& rhs) {
+float dot(const Vec &lhs, const Vec &rhs) {
+    __m128 sum  = _mm_set1_ps(0);
+    auto* r = const_cast<float*>(rhs.data());
+    auto* l = const_cast<float*>(lhs.data());
+    for (uint32_t i = 0; i < 100; i+=4) {
+        __m128 rs = _mm_load_ps(r);
+        __m128 ls = _mm_load_ps(l);
+        __m128 prod = _mm_mul_ps(rs, ls);
+        sum = _mm_add_ps(sum, prod);
+        l += 4;
+        r += 4;
+    }
+
+    float sums[4] = {};
+    _mm_store_ps(sums, sum);
+    float ans = 0.0f;
+    for (float s: sums) {
+        ans += s;
+    }
+    return ans;
+}
+
+
+float dot1(const Vec& lhs, const Vec& rhs) {
     float ans = 0.0;
     for (unsigned i = 0; i < 100; ++i) {
         ans += (lhs[i] * rhs[i]);
@@ -200,6 +224,32 @@ uint64_t makeSignature(const Vec& randUnit, const Vec& vec) {
     return dot(randUnit, vec) / alpha;
 }
 
+/*unordered_map<pair<uint32_t, uint32_t>, float> distCache;
+float distanceCached(const vector<vector<float>> &points, uint32_t id1, uint32_t id2) {
+    uint64_t pair = id1 < id2 ? ((static_cast<long>(id1) << 32) | id2) : ((static_cast<long>(id2) << 32) | id1);
+    auto iter = distCache.find(pair);
+    if (iter == distCache.end()) {
+        float dist = distance128(points[id1], points[id1]);
+        distCache[pair] = dist;
+        return dist;
+    } else {
+        return iter->second;
+    }
+}*/
+
+unordered_map<uint64_t, float> distCache;
+float distanceCached(const vector<vector<float>> &points, uint32_t id1, uint32_t id2) {
+    uint64_t pair = id1 < id2 ? ((static_cast<uint64_t>(id1) << 32) | id2) : ((static_cast<uint64_t>(id2) << 32) | id1);
+    auto iter = distCache.find(pair);
+    if (iter == distCache.end()) {
+        float dist = distance128(points[id1], points[id2]);
+//        distCache[pair] = dist;
+        distCache.insert(make_pair(pair, dist));
+        return dist;
+    } else {
+        return iter->second;
+    }
+}
 
 vector<uint32_t> CalculateOneKnn(const vector<vector<float>> &data,
                                  const vector<uint32_t> &sample_indexes,
@@ -230,33 +280,44 @@ vector<uint32_t> CalculateOneKnn(const vector<vector<float>> &data,
     return knn;
 }
 
-vector<uint32_t> CalculateOneKnn2(const vector<vector<float>> &data,
-                                 const vector<pair<float, uint32_t>> &sample_indexes,
-                                 const uint32_t id) {
-    std::priority_queue<std::pair<float, uint32_t>> top_candidates;
-    float lower_bound = std::numeric_limits<float>::max();
-    for (auto& [hash, sample_id]: sample_indexes) {
-        if (id == sample_id) continue;  // skip itself.
-        float dist = distance128(data[id], data[sample_id]);
+struct KnnSet {
+    std::priority_queue<std::pair<float, uint32_t>> queue;
+    std::unordered_set<uint32_t> set;
+};
 
-        // only keep the top 100
-        if (top_candidates.size() < 100 || dist < lower_bound) {
-            top_candidates.push(std::make_pair(dist, sample_id));
-            if (top_candidates.size() > 100) {
-                top_candidates.pop();
-            }
-
-            lower_bound = top_candidates.top().first;
-        }
-    }
-
+vector<uint32_t> finalize(KnnSet& currKnn) {
     vector<uint32_t> knn;
-    while (!top_candidates.empty()) {
-        knn.emplace_back(top_candidates.top().second);
-        top_candidates.pop();
+    while (!currKnn.queue.empty()) {
+        knn.emplace_back(currKnn.queue.top().second);
+        currKnn.queue.pop();
     }
     std::reverse(knn.begin(), knn.end());
     return knn;
+}
+
+void addCandidates(const vector<vector<float>> &points,
+                   KnnSet& currKnn,
+                   vector<pair<float, uint32_t>>& candidates,
+                   const uint32_t id) {
+    float lower_bound = std::numeric_limits<float>::max();
+    for (auto& [hash, candidate_id]: candidates) {
+        if (id == candidate_id) continue;  // skip itself.
+        if (currKnn.set.find(candidate_id) != currKnn.set.end()) continue; // already in set
+        float dist = distance128(points[id], points[candidate_id]);
+
+        // only keep the top 100
+        if (currKnn.queue.size() < 100 || dist < lower_bound) {
+            currKnn.set.insert(candidate_id);
+            currKnn.queue.push(std::make_pair(dist, candidate_id));
+            if (currKnn.queue.size() > 100) {
+                pair<float, uint32_t> toRemove = currKnn.queue.top();
+                currKnn.set.erase(toRemove.second);
+                currKnn.queue.pop();
+            }
+
+            lower_bound = currKnn.queue.top().first;
+        }
+    }
 }
 
 void constructResultActual(const vector<Vec>& data, vector<vector<uint32_t>>& result) {
@@ -484,10 +545,9 @@ vector<pair<float, uint32_t>> splitInTwo(vector<pair<float, uint32_t>>& group1) 
 }
 
 
-template<class T>
-void print(vector<T> ts) {
-    for (char i: ts)
-        std::cout << i << ", ";
+void print(vector<float>& ts) {
+    for (float t: ts)
+        std::cout << t << ", ";
     std::cout << std::endl;
 }
 
@@ -495,7 +555,7 @@ void print(vector<T> ts) {
 vector<pair<float, uint32_t>> splitGroup(vector<pair<float, uint32_t>>& group, const vector<Vec>& points) {
     auto u = randUniformUnitVec(100);
     std::cout << "split group, size: " << group.size() << std::endl;
-//    std::cout << "unit vec"; print(u);
+//    std::cout << "unit vec: "; print(u);
 
     for (auto& p : group) {
         p.first = dot(u, points[p.second]);
@@ -505,7 +565,7 @@ vector<pair<float, uint32_t>> splitGroup(vector<pair<float, uint32_t>>& group, c
 }
 
 void splitRecursiveSingleThreaded(const vector<Vec>& points,vector<pair<float, uint32_t>>& group, vector<vector<pair<float, uint32_t>>>& allGroups) {
-    uint64_t maxGroupSize = 5000;
+    uint64_t maxGroupSize = 200;
     if (group.size() < maxGroupSize) {
         allGroups.push_back(group);
     } else {
@@ -516,43 +576,55 @@ void splitRecursiveSingleThreaded(const vector<Vec>& points,vector<pair<float, u
     }
 }
 
-void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>>& result) {
-    uint64_t maxGroupSize = 5000; // 10m / 2^i == 4882 for some i
-
+vector<pair<float, uint32_t>> buildInitialGroups(const vector<Vec>& points) {
     vector<pair<float, uint32_t>> group1;
     auto numPoints = points.size();
     auto u = randUniformUnitVec(100);
     for (uint32_t i = 0; i < numPoints; ++i) {
-        auto& v = points[i];
-        float hash = dot(u, v);
+        float hash = dot(u, points[i]);
         group1.emplace_back(hash, i);
     }
     sort(group1.begin(), group1.end());
+    return group1;
+}
 
-    vector<vector<pair<float, uint32_t>>> groups;
-    splitRecursiveSingleThreaded(points, group1, groups);
+void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>>& result) {
 
-    auto numThreads = std::thread::hardware_concurrency();
-    std::vector<std::thread> threads;
+    vector<KnnSet> idToKnn(points.size());
+    for (auto iteration = 0; iteration < 15; ++iteration) {
+        auto group1 = buildInitialGroups(points);
+        vector<vector<pair<float, uint32_t>>> groups;
 
-    Task<vector<pair<float, uint32_t>>> tasks(groups);
+        auto startSort = high_resolution_clock::now();
+        splitRecursiveSingleThreaded(points, group1, groups);
+        auto endSort = high_resolution_clock::now();
+        auto durationSort = duration_cast<milliseconds>(endSort - startSort);
+        std::cout << "sorting time: " << durationSort.count() << std::endl;
 
-    for (uint32_t t = 0; t < numThreads; ++t) {
-        threads.emplace_back([&]() {
-            auto optGroup = tasks.getTask();
+        auto numThreads = std::thread::hardware_concurrency();
+        std::vector<std::thread> threads;
 
-            while (optGroup) {
-                auto& grp = *optGroup;
-                for (auto& [hash, id]: grp) {
-                    result[id] = CalculateOneKnn2(points, grp, id);
+        Task<vector<pair<float, uint32_t>>> tasks(groups);
+
+        for (uint32_t t = 0; t < numThreads; ++t) {
+            threads.emplace_back([&]() {
+                auto optGroup = tasks.getTask();
+                while (optGroup) {
+                    auto& grp = *optGroup;
+                    std::cout << "processing groups, size: " << grp.size() << std::endl;
+                    for (auto& [hash, id]: grp) {
+                        addCandidates(points, idToKnn[id], grp, id);
+                    }
+                    optGroup = tasks.getTask();
                 }
-                optGroup = tasks.getTask();
-            }
-        });
+            });
+        }
+
+        for (auto& thread: threads) { thread.join(); }
     }
 
-    for (auto& thread: threads) {
-        thread.join();
+    for (uint32_t id = 0; id < points.size(); ++id) {
+        result[id] = finalize(idToKnn[id]);
     }
 
     auto sizes = padResult(points, result);
@@ -560,9 +632,6 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
         std::cout << "size: " << i << ", count: " << sizes[i] << std::endl;
     }
 }
-
-
-
 
 
 int main(int argc, char **argv) {
