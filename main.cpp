@@ -577,18 +577,22 @@ void splitRecursiveSingleThreaded(const vector<Vec>& points,vector<pair<float, u
 }
 
 vector<pair<float, uint32_t>> buildInitialGroups(const vector<Vec>& points) {
-    vector<pair<float, uint32_t>> group1;
+    vector<pair<float, uint32_t>> group;
     auto numPoints = points.size();
     auto u = randUniformUnitVec(100);
     for (uint32_t i = 0; i < numPoints; ++i) {
         float hash = dot(u, points[i]);
-        group1.emplace_back(hash, i);
+        group.emplace_back(hash, i);
     }
-    sort(group1.begin(), group1.end());
-    return group1;
+    sort(group.begin(), group.end());
+    return group;
 }
 
+
+
 void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>>& result) {
+    uint64_t numHashFunctions = 4;
+    uint64_t bucketSize = 500;
 
     vector<KnnSet> idToKnn(points.size());
     for (auto iteration = 0; iteration < 15; ++iteration) {
