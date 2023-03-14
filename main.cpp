@@ -31,7 +31,9 @@ using std::chrono::high_resolution_clock;
 using std::chrono::duration_cast;
 using std::chrono::duration;
 using std::chrono::milliseconds;
+using std::chrono::seconds;
 using Vec = vector<float>;
+using hclock = std::chrono::high_resolution_clock;
 
 
 
@@ -49,10 +51,15 @@ using Vec = vector<float>;
  * https://courses.engr.illinois.edu/cs498abd/fa2020/slides/14-lec.pdf
  * https://www.youtube.com/watch?v=yIkyeackISs&ab_channel=SimonsInstitute
  * https://arxiv.org/abs/1501.01062
+ * http://www.slaney.org/malcolm/yahoo/Slaney2012(OptimalLSH).pdf
  */
 
+// DEPRECATED
 uint32_t numProjections = 4;
 uint8_t numBuckets = 4; //std::numeric_limits<unsigned char>::max();
+
+
+uint64_t maxGroupSize = 1000; // will be around 600
 
 template<class T>
 struct Task {
@@ -295,27 +302,38 @@ vector<uint32_t> finalize(KnnSet& currKnn) {
     return knn;
 }
 
-void addCandidates(const vector<vector<float>> &points,
-                   KnnSet& currKnn,
-                   vector<pair<float, uint32_t>>& candidates,
-                   const uint32_t id) {
+void addCandidateToKnnSet(const uint32_t id, KnnSet& currKnn, const uint32_t candidate_id, float dist) {
     float lower_bound = std::numeric_limits<float>::max();
-    for (auto& [hash, candidate_id]: candidates) {
-        if (id == candidate_id) continue;  // skip itself.
-        if (currKnn.set.find(candidate_id) != currKnn.set.end()) continue; // already in set
-        float dist = distance128(points[id], points[candidate_id]);
+    if (id == candidate_id) return;  // skip itself.
+    if (currKnn.set.find(candidate_id) != currKnn.set.end()) return; // already in set
 
-        // only keep the top 100
-        if (currKnn.queue.size() < 100 || dist < lower_bound) {
-            currKnn.set.insert(candidate_id);
-            currKnn.queue.push(std::make_pair(dist, candidate_id));
-            if (currKnn.queue.size() > 100) {
-                pair<float, uint32_t> toRemove = currKnn.queue.top();
-                currKnn.set.erase(toRemove.second);
-                currKnn.queue.pop();
-            }
+    // only keep the top 100
+    if (currKnn.queue.size() < 100 || dist < lower_bound) {
+        currKnn.set.insert(candidate_id);
+        currKnn.queue.push(std::make_pair(dist, candidate_id));
+        if (currKnn.queue.size() > 100) {
+            pair<float, uint32_t> toRemove = currKnn.queue.top();
+            currKnn.set.erase(toRemove.second);
+            currKnn.queue.pop();
+        }
+        lower_bound = currKnn.queue.top().first;
+    }
+}
 
-            lower_bound = currKnn.queue.top().first;
+void addCandidates(const vector<vector<float>> &points,
+                   const vector<pair<float, uint32_t>>& group,
+                   vector<KnnSet>& idToKnn) {
+    for (uint32_t i=0, groupLen=group.size(); i < groupLen-1; ++i) {
+        for (uint32_t j=i+1; j < groupLen; ++j) {
+            auto id1 = group[i].second;
+            auto id2 = group[j].second;
+            float dist = distance128(points[id1], points[id2]);
+
+            auto& knnSet1 = idToKnn[id1];
+            auto& knnSet2 = idToKnn[id2];
+
+            addCandidateToKnnSet(id1, knnSet1, id2, dist);
+            addCandidateToKnnSet(id2, knnSet2, id1, dist);
         }
     }
 }
@@ -462,8 +480,8 @@ void constructResult(const vector<Vec>& points, vector<vector<uint32_t>>& result
     result.resize(points.size());
 
     std::atomic<uint64_t> count = 0;
-    auto startTime = high_resolution_clock::now();
-    auto start10k = high_resolution_clock::now();
+    auto startTime = hclock::now();
+    auto start10k = hclock::now();
 
     Task<uint64_t> tasks(getKeys(sigToPoints));
 
@@ -482,7 +500,7 @@ void constructResult(const vector<Vec>& points, vector<vector<uint32_t>>& result
 
                     auto localCount = count++;
                     if (localCount % 10'000 == 0) {
-                        auto currentTime = high_resolution_clock::now();
+                        auto currentTime = hclock::now();
                         auto durationGroup = duration_cast<milliseconds>(currentTime - start10k);
                         auto durationTotal = duration_cast<milliseconds>(currentTime - startTime);
 
@@ -533,8 +551,8 @@ vector<uint32_t> padResult(const vector<Vec>& points, vector<vector<uint32_t>>& 
     return sizes;
 }
 
-// assume sorted
 vector<pair<float, uint32_t>> splitInTwo(vector<pair<float, uint32_t>>& group1) {
+    sort(group1.begin(), group1.end());
     vector<pair<float, uint32_t>> group2;
     uint32_t half = group1.size() / 2;
     while (group2.size() < half) {
@@ -552,25 +570,20 @@ void print(vector<float>& ts) {
 }
 
 
-vector<pair<float, uint32_t>> splitGroup(vector<pair<float, uint32_t>>& group, const vector<Vec>& points) {
+void rehash(vector<pair<float, uint32_t>>& group, const vector<Vec>& points) {
     auto u = randUniformUnitVec(100);
-    std::cout << "split group, size: " << group.size() << std::endl;
-//    std::cout << "unit vec: "; print(u);
-
     for (auto& p : group) {
         p.first = dot(u, points[p.second]);
     }
-    sort(group.begin(), group.end());
-    return splitInTwo(group);
 }
 
 void splitRecursiveSingleThreaded(const vector<Vec>& points,vector<pair<float, uint32_t>>& group, vector<vector<pair<float, uint32_t>>>& allGroups) {
-    uint64_t maxGroupSize = 200;
     if (group.size() < maxGroupSize) {
         allGroups.push_back(group);
     } else {
         // modify group in place
-        auto otherGroup = splitGroup(group, points);
+        rehash(group, points);
+        auto otherGroup = splitInTwo(group);
         splitRecursiveSingleThreaded(points, group, allGroups);
         splitRecursiveSingleThreaded(points, otherGroup, allGroups);
     }
@@ -591,19 +604,17 @@ vector<pair<float, uint32_t>> buildInitialGroups(const vector<Vec>& points) {
 
 
 void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>>& result) {
-    uint64_t numHashFunctions = 4;
-    uint64_t bucketSize = 500;
-
+    auto startTime = hclock::now();
     vector<KnnSet> idToKnn(points.size());
-    for (auto iteration = 0; iteration < 15; ++iteration) {
+    for (auto iteration = 0; iteration < 5; ++iteration) {
+        std::cout << "start iteration: " << iteration << ", time (s): " << duration_cast<seconds>(hclock::now() - startTime).count() << std::endl;
         auto group1 = buildInitialGroups(points);
         vector<vector<pair<float, uint32_t>>> groups;
 
-        auto startSort = high_resolution_clock::now();
+        auto startSort = hclock::now();
         splitRecursiveSingleThreaded(points, group1, groups);
-        auto endSort = high_resolution_clock::now();
-        auto durationSort = duration_cast<milliseconds>(endSort - startSort);
-        std::cout << "sorting time: " << durationSort.count() << std::endl;
+        std::cout << "split/sort time: " << duration_cast<milliseconds>(hclock::now() - startSort).count() << std::endl;
+        std::cout << "end sort iteration: " << iteration << ", time (s): " << duration_cast<seconds>(hclock::now() - startTime).count() << std::endl;
 
         auto numThreads = std::thread::hardware_concurrency();
         std::vector<std::thread> threads;
@@ -615,16 +626,16 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
                 auto optGroup = tasks.getTask();
                 while (optGroup) {
                     auto& grp = *optGroup;
-                    std::cout << "processing groups, size: " << grp.size() << std::endl;
-                    for (auto& [hash, id]: grp) {
-                        addCandidates(points, idToKnn[id], grp, id);
-                    }
+//                    std::cout << "processing groups, size: " << grp.size() << std::endl;
+                    addCandidates(points, grp, idToKnn);
                     optGroup = tasks.getTask();
                 }
             });
         }
 
         for (auto& thread: threads) { thread.join(); }
+        std::cout << "end group processing iteration: " << iteration << ", time (s): " << duration_cast<seconds>(hclock::now() - startTime).count() << std::endl;
+
     }
 
     for (uint32_t id = 0; id < points.size(); ++id) {
