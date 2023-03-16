@@ -61,6 +61,13 @@ uint64_t maxGroupSize = 200; // will be around 600
 uint64_t groupingTime = 0;
 uint64_t processGroupsTime = 0;
 
+#ifdef LOCAL_RUN
+long timeBoundsMs = 60'000;
+#else
+long timeBoundsMs = 1'600'000;
+#endif
+
+
 
 template<class T>
 struct Task {
@@ -718,6 +725,19 @@ void rehash(vector<pair<float, uint32_t>>& group, const vector<Vec>& vecs) {
     }
 }
 
+pair<float, float> rehashMinMax(vector<pair<float, uint32_t>>& group, const vector<Vec>& vecs) {
+    float min = std::numeric_limits<float>::max();
+    float max = std::numeric_limits<float>::min();
+    auto u = randUniformUnitVec();
+    for (auto& p : group) {
+        float proj = dot(u, vecs[p.second]);
+        p.first = proj;
+        min = std::min(proj, min);
+        max = std::max(proj, max);
+    }
+    return {min, max};
+}
+
 void splitRecursiveSingleThreaded(const vector<Vec>& points,vector<pair<float, uint32_t>>& group, vector<vector<pair<float, uint32_t>>>& allGroups) {
     if (group.size() < maxGroupSize) {
         allGroups.push_back(group);
@@ -727,6 +747,51 @@ void splitRecursiveSingleThreaded(const vector<Vec>& points,vector<pair<float, u
         auto otherGroup = splitInTwo(group);
         splitRecursiveSingleThreaded(points, group, allGroups);
         splitRecursiveSingleThreaded(points, otherGroup, allGroups);
+    }
+}
+
+void splitRecursiveNoSort(const vector<Vec>& points,vector<pair<float, uint32_t>>& group, vector<vector<pair<float, uint32_t>>>& allGroups) {
+    if (group.size() < maxGroupSize) {
+        allGroups.push_back(group);
+    } else {
+        // modify group in place
+        auto [min, max] = rehashMinMax(group, points);
+        auto mid = min + (max - min) / 2;
+
+        vector<pair<float, uint32_t>> low;
+        vector<pair<float, uint32_t>> hi;
+        for (auto& p : group) {
+            auto& [hash, id] = p;
+            if (hash <= mid) {
+                low.push_back(p);
+            } else {
+                hi.push_back(p);
+            }
+        }
+        splitRecursiveNoSort(points, low, allGroups);
+        splitRecursiveNoSort(points, hi, allGroups);
+    }
+}
+
+void splitRecursiveMulti(const vector<Vec>& points,vector<pair<float, uint32_t>>& group, vector<vector<pair<float, uint32_t>>>& allGroups) {
+    if (group.size() < maxGroupSize) {
+        allGroups.push_back(group);
+    } else {
+        // modify group in place
+        rehash(group, points);
+        sort(group.begin(), group.end());
+
+        auto numSplits = 4;
+        uint32_t splitSize = group.size() / numSplits;
+        for (auto split = 0; split < numSplits - 1; ++split) {
+            vector<pair<float, uint32_t>> splitGroup;
+            while (splitGroup.size() < splitSize) {
+                splitGroup.push_back(group.back());
+                group.pop_back();
+            }
+            splitRecursiveMulti(points,  splitGroup, allGroups);
+        }
+        splitRecursiveMulti(points, group, allGroups);
     }
 }
 
@@ -743,25 +808,34 @@ vector<pair<float, uint32_t>> buildInitialGroups(const vector<Vec>& points) {
 }
 
 
-
 void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>>& result) {
+    std::cout << "start run with time bound: " << timeBoundsMs << std::endl;
+
     auto startTime = hclock::now();
+    auto currentTime = startTime;
     vector<KnnSet> idToKnn(points.size());
 
-    for (auto iteration = 0; iteration < 10; ++iteration) {
-        std::cout << "start iteration: " << iteration << ", time (s): " << duration_cast<seconds>(hclock::now() - startTime).count() << std::endl;
+    uint32_t iteration = 0;
+    while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
+        auto startGroup = hclock::now();
+
         auto group1 = buildInitialGroups(points);
         vector<vector<pair<float, uint32_t>>> groups;
+        splitRecursiveNoSort(points, group1, groups);
 
-        auto startSort = hclock::now();
-        splitRecursiveSingleThreaded(points, group1, groups);
-        auto sortDuration = duration_cast<milliseconds>(hclock::now() - startSort).count();
-        groupingTime += sortDuration;
-        std::cout << "split/sort time: " << sortDuration << std::endl;
-        std::cout << "end sort iteration: " << iteration << ", time (s): " << duration_cast<seconds>(hclock::now() - startTime).count() << std::endl;
+        auto total = 0;
+        for (auto& g : groups) {
+            total += g.size() ;
+        }
+        std::cout << "check groups add up to total size: " << total << std::endl;
+        std::cout << "first group size: " << groups[0].size() << std::endl;
+        std::cout << "last group size: " << groups.back().size() << std::endl;
 
-
+        auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
+        groupingTime += groupDuration;
+        std::cout << "iteration: " << iteration << ", group time: " << groupDuration << std::endl;
         auto startProcessing = hclock::now();
+
         auto numThreads = std::thread::hardware_concurrency();
         vector<std::thread> threads;
         Task<vector<pair<float, uint32_t>>> tasks(groups);
@@ -772,7 +846,6 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
                 while (optGroup) {
                     auto& grp = *optGroup;
                     count += grp.size();
-//                    std::cout << "processed: " << count << std::endl;
                     addCandidates(points, grp, idToKnn);
                     optGroup = tasks.getTask();
                 }
@@ -781,8 +854,11 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
 
         for (auto& thread: threads) { thread.join(); }
 
-        processGroupsTime += duration_cast<milliseconds>(hclock::now() - startProcessing).count();
-        std::cout << "end group processing iteration: " << iteration << ", time (s): " << duration_cast<seconds>(hclock::now() - startTime).count() << std::endl;
+        auto processingDuration = duration_cast<milliseconds>(hclock::now() - startProcessing).count();
+        processGroupsTime += processingDuration;
+        std::cout << "iteration: " << iteration << ", processing time: " << processingDuration << std::endl;
+
+        iteration++;
     }
 
     for (uint32_t id = 0; id < points.size(); ++id) {
@@ -809,14 +885,19 @@ int main(int argc, char **argv) {
 
   // Read data points
   vector<vector<float>> nodes;
+
+  auto startRead = hclock::now();
   ReadBin(source_path, nodes);
+  std::cout << "read time: " << duration_cast<milliseconds>(hclock::now() - startRead).count() << std::endl;
 
   // Knng constuction
   vector<vector<uint32_t>> knng(nodes.size());
   constructResultSplitting(nodes, knng);
 
   // Save to ouput.bin
+  auto startSave = hclock::now();
   SaveKNNG(knng);
+  std::cout << "save time: " << duration_cast<milliseconds>(hclock::now() - startSave).count() << std::endl;
 
   return 0;
 }

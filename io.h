@@ -9,6 +9,7 @@
 #include <numeric>
 #include <string>
 #include <vector>
+#include <boost/align/aligned_allocator.hpp>
 
 #include "assert.h"
 
@@ -21,7 +22,7 @@ using std::vector;
 /// @param knng a (N * 100) shape 2-D vector
 /// @param path target save path, the output knng should be named as
 /// "output.bin" for evaluation
-void SaveKNNG(const std::vector<std::vector<uint32_t>> &knng,
+void SaveKNNG(const vector<vector<uint32_t>> &knng,
               const std::string &path = "output.bin") {
   std::ofstream ofs(path, std::ios::out | std::ios::binary);
   const int K = 100;
@@ -40,7 +41,7 @@ void SaveKNNG(const std::vector<std::vector<uint32_t>> &knng,
 /// @param file_path file path of binary data
 /// @param data returned 2D data vectors
 void ReadBin(const std::string &file_path,
-             std::vector<std::vector<float>> &data) {
+             vector<vector<float>> &data) {
   std::cout << "Reading Data: " << file_path << std::endl;
   std::ifstream ifs;
   ifs.open(file_path, std::ios::binary);
@@ -52,10 +53,10 @@ void ReadBin(const std::string &file_path,
   std::cout << "# of points: " << N << std::endl;
 
   const int num_dimensions = 100;
-  std::vector<float> buff(num_dimensions);
+  vector<float> buff(num_dimensions);
   int counter = 0;
   while (ifs.read((char *)buff.data(), num_dimensions * sizeof(float))) {
-    std::vector<float> row(num_dimensions);
+    vector<float> row(num_dimensions);
     for (int d = 0; d < num_dimensions; d++) {
       row[d] = static_cast<float>(buff[d]);
     }
