@@ -320,6 +320,7 @@ vector<uint32_t> CalculateOneKnn(const vector<vector<float>> &data,
 
 struct KnnSet {
     vector<pair<float, uint32_t>> queue;
+    float lower_bound = std::numeric_limits<float>::max();
 
     KnnSet() {
         queue.reserve(100);
@@ -357,18 +358,17 @@ vector<uint32_t> finalize(KnnSet& currKnn) {
     return knn;
 }
 
-void addCandidateToKnnSet(const uint32_t id, KnnSet& currKnn, const uint32_t candidate_id, float dist) {
-    float lower_bound = std::numeric_limits<float>::max();
+void addCandidateToKnnSet(KnnSet& currKnn, const uint32_t candidate_id, float dist) {
     if (currKnn.contains(candidate_id)) return; // already in set
 
     // only keep the top 100
     if (currKnn.queue.size() < 100) {
         currKnn.push(std::make_pair(dist, candidate_id));
-        lower_bound = currKnn.top().first;
-    } else if (dist < lower_bound) {
+        currKnn.lower_bound = currKnn.top().first;
+    } else if (dist < currKnn.lower_bound) {
         currKnn.push(std::make_pair(dist, candidate_id));
         currKnn.pop();
-        lower_bound = currKnn.top().first;
+        currKnn.lower_bound = currKnn.top().first;
     }
 }
 
@@ -384,8 +384,8 @@ void addCandidates(const vector<vector<float>> &points,
             auto& knnSet1 = idToKnn[id1];
             auto& knnSet2 = idToKnn[id2];
 
-            addCandidateToKnnSet(id1, knnSet1, id2, dist);
-            addCandidateToKnnSet(id2, knnSet2, id1, dist);
+            addCandidateToKnnSet(knnSet1, id2, dist);
+            addCandidateToKnnSet(knnSet2, id1, dist);
         }
     }
 }
@@ -751,7 +751,7 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
     auto startTime = hclock::now();
     vector<KnnSet> idToKnn(points.size());
 
-    for (auto iteration = 0; iteration < 10; ++iteration) {
+    for (auto iteration = 0; iteration < 2; ++iteration) {
         std::cout << "start iteration: " << iteration << ", time (s): " << duration_cast<seconds>(hclock::now() - startTime).count() << std::endl;
         auto group1 = buildInitialGroups(points);
         vector<vector<pair<float, uint32_t>>> groups;
