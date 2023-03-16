@@ -321,9 +321,11 @@ vector<uint32_t> CalculateOneKnn(const vector<vector<float>> &data,
 struct KnnSet {
     vector<pair<float, uint32_t>> queue;
     float lower_bound = std::numeric_limits<float>::max();
+    vector<uint32_t> set;
 
     KnnSet() {
         queue.reserve(100);
+        set.resize(100 * 1.3, std::numeric_limits<unsigned>::max()); // dummy value
     }
 
     bool contains(uint32_t node) {
@@ -346,31 +348,32 @@ struct KnnSet {
         std::pop_heap(queue.begin(), queue.end());
         queue.pop_back();
     }
+
+    void addCandidate(const uint32_t candidate_id, float dist) {
+        if (contains(candidate_id)) {
+            return; // already in set
+        } else if (queue.size() < 100) {
+            push(std::make_pair(dist, candidate_id));
+            lower_bound = top().first;
+        } else if (dist < lower_bound) {
+            push(std::make_pair(dist, candidate_id));
+            pop();
+            lower_bound = top().first;
+        }
+    }
+
+    vector<uint32_t> finalize() {
+        vector<uint32_t> knn;
+        while (!queue.empty()) {
+            knn.emplace_back(top().second);
+            pop();
+        }
+        std::reverse(knn.begin(), knn.end());
+        return knn;
+    }
 };
 
-vector<uint32_t> finalize(KnnSet& currKnn) {
-    vector<uint32_t> knn;
-    while (!currKnn.queue.empty()) {
-        knn.emplace_back(currKnn.top().second);
-        currKnn.pop();
-    }
-    std::reverse(knn.begin(), knn.end());
-    return knn;
-}
 
-void addCandidateToKnnSet(KnnSet& currKnn, const uint32_t candidate_id, float dist) {
-    if (currKnn.contains(candidate_id)) return; // already in set
-
-    // only keep the top 100
-    if (currKnn.queue.size() < 100) {
-        currKnn.push(std::make_pair(dist, candidate_id));
-        currKnn.lower_bound = currKnn.top().first;
-    } else if (dist < currKnn.lower_bound) {
-        currKnn.push(std::make_pair(dist, candidate_id));
-        currKnn.pop();
-        currKnn.lower_bound = currKnn.top().first;
-    }
-}
 
 void addCandidates(const vector<vector<float>> &points,
                    const vector<pair<float, uint32_t>>& group,
@@ -380,12 +383,8 @@ void addCandidates(const vector<vector<float>> &points,
             auto id1 = group[i].second;
             auto id2 = group[j].second;
             float dist = distance128(points[id1], points[id2]);
-
-            auto& knnSet1 = idToKnn[id1];
-            auto& knnSet2 = idToKnn[id2];
-
-            addCandidateToKnnSet(knnSet1, id2, dist);
-            addCandidateToKnnSet(knnSet2, id1, dist);
+            idToKnn[id1].addCandidate(id2, dist);
+            idToKnn[id2].addCandidate(id1, dist);
         }
     }
 }
@@ -789,7 +788,7 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
     }
 
     for (uint32_t id = 0; id < points.size(); ++id) {
-        result[id] = finalize(idToKnn[id]);
+        result[id] = idToKnn[id].finalize();
     }
 
     auto sizes = padResult(points, result);
