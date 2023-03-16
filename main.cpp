@@ -319,15 +319,39 @@ vector<uint32_t> CalculateOneKnn(const vector<vector<float>> &data,
 }
 
 struct KnnSet {
-    std::priority_queue<std::pair<float, uint32_t>> queue;
-    std::unordered_set<uint32_t> set;
+    vector<pair<float, uint32_t>> queue;
+
+    KnnSet() {
+        queue.reserve(100);
+    }
+
+    bool contains(uint32_t node) {
+        for (auto& [dist, id]: queue) {
+            if (id == node) return true;
+        }
+        return false;
+    }
+
+    pair<float, uint32_t>& top() {
+        return queue[0];
+    }
+
+    void push(pair<float, uint32_t> nodePair) {
+        queue.emplace_back(std::move(nodePair));
+        std::push_heap(queue.begin(), queue.end());
+    }
+
+    void pop() {
+        std::pop_heap(queue.begin(), queue.end());
+        queue.pop_back();
+    }
 };
 
 vector<uint32_t> finalize(KnnSet& currKnn) {
     vector<uint32_t> knn;
     while (!currKnn.queue.empty()) {
-        knn.emplace_back(currKnn.queue.top().second);
-        currKnn.queue.pop();
+        knn.emplace_back(currKnn.top().second);
+        currKnn.pop();
     }
     std::reverse(knn.begin(), knn.end());
     return knn;
@@ -335,19 +359,16 @@ vector<uint32_t> finalize(KnnSet& currKnn) {
 
 void addCandidateToKnnSet(const uint32_t id, KnnSet& currKnn, const uint32_t candidate_id, float dist) {
     float lower_bound = std::numeric_limits<float>::max();
-    if (id == candidate_id) return;  // skip itself.
-    if (currKnn.set.find(candidate_id) != currKnn.set.end()) return; // already in set
+    if (currKnn.contains(candidate_id)) return; // already in set
 
     // only keep the top 100
-    if (currKnn.queue.size() < 100 || dist < lower_bound) {
-        currKnn.set.insert(candidate_id);
-        currKnn.queue.push(std::make_pair(dist, candidate_id));
-        if (currKnn.queue.size() > 100) {
-            pair<float, uint32_t> toRemove = currKnn.queue.top();
-            currKnn.set.erase(toRemove.second);
-            currKnn.queue.pop();
-        }
-        lower_bound = currKnn.queue.top().first;
+    if (currKnn.queue.size() < 100) {
+        currKnn.push(std::make_pair(dist, candidate_id));
+        lower_bound = currKnn.top().first;
+    } else if (dist < lower_bound) {
+        currKnn.push(std::make_pair(dist, candidate_id));
+        currKnn.pop();
+        lower_bound = currKnn.top().first;
     }
 }
 
@@ -737,14 +758,16 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
 
         auto startSort = hclock::now();
         splitRecursiveSingleThreaded(points, group1, groups);
-        std::cout << "split/sort time: " << duration_cast<milliseconds>(hclock::now() - startSort).count() << std::endl;
+        auto sortDuration = duration_cast<milliseconds>(hclock::now() - startSort).count();
+        groupingTime += sortDuration;
+        std::cout << "split/sort time: " << sortDuration << std::endl;
         std::cout << "end sort iteration: " << iteration << ", time (s): " << duration_cast<seconds>(hclock::now() - startTime).count() << std::endl;
 
+
+        auto startProcessing = hclock::now();
         auto numThreads = std::thread::hardware_concurrency();
         std::vector<std::thread> threads;
-
         Task<vector<pair<float, uint32_t>>> tasks(groups);
-
         atomic<uint32_t> count = 0;
         for (uint32_t t = 0; t < numThreads; ++t) {
             threads.emplace_back([&]() {
@@ -752,7 +775,7 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
                 while (optGroup) {
                     auto& grp = *optGroup;
                     count += grp.size();
-                    std::cout << "processed: " << count << std::endl;
+//                    std::cout << "processed: " << count << std::endl;
                     addCandidates(points, grp, idToKnn);
                     optGroup = tasks.getTask();
                 }
@@ -760,8 +783,9 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
         }
 
         for (auto& thread: threads) { thread.join(); }
-        std::cout << "end group processing iteration: " << iteration << ", time (s): " << duration_cast<seconds>(hclock::now() - startTime).count() << std::endl;
 
+        processGroupsTime += duration_cast<milliseconds>(hclock::now() - startProcessing).count();
+        std::cout << "end group processing iteration: " << iteration << ", time (s): " << duration_cast<seconds>(hclock::now() - startTime).count() << std::endl;
     }
 
     for (uint32_t id = 0; id < points.size(); ++id) {
@@ -772,6 +796,9 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
     for (uint32_t i=0; i < sizes.size(); ++i) {
         std::cout << "size: " << i << ", count: " << sizes[i] << std::endl;
     }
+
+    std::cout << "total grouping time (ms): " << groupingTime << std::endl;
+    std::cout << "total processing time (ms): " << processGroupsTime << std::endl;
 }
 
 
