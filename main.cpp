@@ -750,6 +750,36 @@ void splitRecursiveSingleThreaded(const vector<Vec>& points,vector<pair<float, u
     }
 }
 
+void splitNoSort(const vector<Vec>& points,vector<pair<float, uint32_t>>& group1, vector<vector<pair<float, uint32_t>>>& allGroups) {
+    vector<vector<pair<float, uint32_t>>> stack;
+    stack.push_back(group1);
+
+    while (!stack.empty()) {
+        auto group = stack.back(); stack.pop_back();
+        if (group.size() < maxGroupSize) {
+            allGroups.push_back(group);
+        } else {
+            // modify group in place
+            auto [min, max] = rehashMinMax(group, points);
+            auto mid = min + (max - min) / 2;
+
+            vector<pair<float, uint32_t>> low;
+            vector<pair<float, uint32_t>> hi;
+            for (auto& p : group) {
+                auto& [hash, id] = p;
+                if (hash <= mid) {
+                    low.push_back(p);
+                } else {
+                    hi.push_back(p);
+                }
+            }
+            stack.push_back(low);
+            stack.push_back(hi);
+        }
+    }
+}
+
+
 void splitRecursiveNoSort(const vector<Vec>& points,vector<pair<float, uint32_t>>& group, vector<vector<pair<float, uint32_t>>>& allGroups) {
     if (group.size() < maxGroupSize) {
         allGroups.push_back(group);
@@ -821,7 +851,7 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
 
         auto group1 = buildInitialGroups(points);
         vector<vector<pair<float, uint32_t>>> groups;
-        splitRecursiveNoSort(points, group1, groups);
+        splitNoSort(points, group1, groups);
 
         auto total = 0;
         for (auto& g : groups) {
