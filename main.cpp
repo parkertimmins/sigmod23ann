@@ -52,6 +52,7 @@ using hclock = std::chrono::high_resolution_clock;
  * https://www.youtube.com/watch?v=yIkyeackISs&ab_channel=SimonsInstitute
  * https://arxiv.org/abs/1501.01062
  * http://www.slaney.org/malcolm/yahoo/Slaney2012(OptimalLSH).pdf
+ * https://www.cs.princeton.edu/cass/papers/mplsh_vldb07.pdf
  */
 
 // DEPRECATED
@@ -59,14 +60,14 @@ uint32_t numProjections = 4;
 uint8_t numBuckets = 4; //std::numeric_limits<unsigned char>::max();
 
 
-uint64_t maxGroupSize = 1000; // will be around 600
+uint64_t maxGroupSize = 200; // will be around 600
 
 template<class T>
 struct Task {
-    vector<T> tasks;
+    vector<T>& tasks;
     std::atomic<uint64_t> index = 0;
 
-    explicit Task(vector<T> tasks): tasks(std::move(tasks)) {}
+    explicit Task(vector<T>& tasks): tasks(tasks) {}
 
     std::optional<T> getTask() {
         auto curr = index.load();
@@ -231,19 +232,6 @@ uint64_t makeSignature(const Vec& randUnit, const Vec& vec) {
     return dot(randUnit, vec) / alpha;
 }
 
-/*unordered_map<pair<uint32_t, uint32_t>, float> distCache;
-float distanceCached(const vector<vector<float>> &points, uint32_t id1, uint32_t id2) {
-    uint64_t pair = id1 < id2 ? ((static_cast<long>(id1) << 32) | id2) : ((static_cast<long>(id2) << 32) | id1);
-    auto iter = distCache.find(pair);
-    if (iter == distCache.end()) {
-        float dist = distance128(points[id1], points[id1]);
-        distCache[pair] = dist;
-        return dist;
-    } else {
-        return iter->second;
-    }
-}*/
-
 unordered_map<uint64_t, float> distCache;
 float distanceCached(const vector<vector<float>> &points, uint32_t id1, uint32_t id2) {
     uint64_t pair = id1 < id2 ? ((static_cast<uint64_t>(id1) << 32) | id2) : ((static_cast<uint64_t>(id2) << 32) | id1);
@@ -390,7 +378,6 @@ vector<K> getKeys(std::unordered_map<K, V>& map) {
 }
 
 
-
 vector<Vec> buildProjectionVecs(auto n) {
     vector<Vec> randVecs;
     while (randVecs.size() < n) {
@@ -483,7 +470,8 @@ void constructResult(const vector<Vec>& points, vector<vector<uint32_t>>& result
     auto startTime = hclock::now();
     auto start10k = hclock::now();
 
-    Task<uint64_t> tasks(getKeys(sigToPoints));
+    auto keys = getKeys(sigToPoints);
+    Task<uint64_t> tasks(keys);
 
     auto numThreads = std::thread::hardware_concurrency();
     std::vector<std::thread> threads;
@@ -606,7 +594,7 @@ vector<pair<float, uint32_t>> buildInitialGroups(const vector<Vec>& points) {
 void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>>& result) {
     auto startTime = hclock::now();
     vector<KnnSet> idToKnn(points.size());
-    for (auto iteration = 0; iteration < 5; ++iteration) {
+    for (auto iteration = 0; iteration < 10; ++iteration) {
         std::cout << "start iteration: " << iteration << ", time (s): " << duration_cast<seconds>(hclock::now() - startTime).count() << std::endl;
         auto group1 = buildInitialGroups(points);
         vector<vector<pair<float, uint32_t>>> groups;
@@ -621,12 +609,14 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
 
         Task<vector<pair<float, uint32_t>>> tasks(groups);
 
+        atomic<uint32_t> count = 0;
         for (uint32_t t = 0; t < numThreads; ++t) {
             threads.emplace_back([&]() {
                 auto optGroup = tasks.getTask();
                 while (optGroup) {
                     auto& grp = *optGroup;
-//                    std::cout << "processing groups, size: " << grp.size() << std::endl;
+                    count += grp.size();
+                    std::cout << "processed: " << count << std::endl;
                     addCandidates(points, grp, idToKnn);
                     optGroup = tasks.getTask();
                 }

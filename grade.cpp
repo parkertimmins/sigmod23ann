@@ -58,29 +58,34 @@ int main(int argc, char **argv) {
     read(n, baseline, baselineData);
     read(n, test, testData);
 
-    vector<double> percents;
+    vector<uint32_t> corrects;
     for (int i = 0; i < n; ++i) {
         auto b = baselineData[i];
         auto t = testData[i];
+
+
+
 
         std::unordered_set<uint32_t> tSet(t.begin(), t.end());
 
         int numCorrect = 0;
         for (auto& bItem : b) {
+//            std::cout << bItem << "," ;
             if (tSet.find(bItem) != tSet.end()) {
                 numCorrect++;
             }
         }
-        percents.push_back(numCorrect / 100.0);
+//        std::cout << std::endl;
+        corrects.push_back(numCorrect);
     }
 
-    double sum = 0;
-    for (auto& p : percents) {
-        sum += p;
+    uint64_t totalCorrect = 0;
+    for (uint32_t c : corrects) {
+        totalCorrect  += c;
     }
 
-    double avg = sum / percents.size();
-    std::cout << "avg percent: " << avg * 100 << std::endl;
+    double avg = static_cast<double>(totalCorrect) / corrects.size();
+    std::cout << "avg percent: " << avg << std::endl;
 
     return 0;
 }
