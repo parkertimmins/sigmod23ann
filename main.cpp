@@ -62,6 +62,10 @@ uint8_t numBuckets = 4; //std::numeric_limits<unsigned char>::max();
 
 uint64_t maxGroupSize = 200; // will be around 600
 
+uint64_t groupingTime = 0;
+uint64_t processGroupsTime = 0;
+
+
 template<class T>
 struct Task {
     vector<T>& tasks;
@@ -148,7 +152,12 @@ float norm(Vec& vec) {
     return sqrt(sumSquares);
 }
 
-
+void normalizeInPlace(Vec& vec) {
+    float vecNorm = norm(vec);
+    for (float& v : vec) {
+        v = v / vecNorm;
+    }
+}
 std::default_random_engine rd(123);
 vector<float> randUniformUnitVec(size_t dim=100) {
     std::mt19937 gen(rd());
@@ -162,21 +171,55 @@ vector<float> randUniformUnitVec(size_t dim=100) {
     }
 
     // make unit vector just for good measure
-    float vecNorm = norm(randVec);
-    for (float& v : randVec) {
-        v = v / vecNorm;
-    }
+    normalizeInPlace(randVec);
     return randVec;
 }
 
+Vec sub(const Vec& lhs, const Vec& rhs) {
+    auto dim = lhs.size();
+    Vec result(dim);
+    auto* r = const_cast<float*>(rhs.data());
+    auto* l = const_cast<float*>(lhs.data());
+    auto* res = const_cast<float*>(result.data());
+    for (uint32_t i = 0; i < dim; i+=4) {
+        __m128 ls = _mm_load_ps(l);
+        __m128 rs = _mm_load_ps(r);
+        __m128 diff = _mm_sub_ps(ls, rs);
+        _mm_store_ps(res, diff);
+        r += 4;
+        l += 4;
+        res += 4;
+    }
+    return result;
+}
 
 
+void plusEq(Vec& lhs, const Vec& rhs) {
+    auto dim = lhs.size();
+    auto* r = const_cast<float*>(rhs.data());
+    auto* l = const_cast<float*>(lhs.data());
+    for (uint32_t i = 0; i < 100; i+=4) {
+        __m128 ls = _mm_load_ps(l);
+        __m128 rs = _mm_load_ps(r);
+        __m128 sum = _mm_add_ps(ls, rs);
+        _mm_store_ps(l, sum);
+        l += 4;
+        r += 4;
+    }
+}
 
-
-Vec scalerMult(float c, const Vec& vec) {
-    Vec result;
-    for (auto& v : vec) {
-        result.push_back(v * c);
+Vec scalarMult(float c, const Vec& vec) {
+    auto dim = 100;
+    Vec result(dim);
+    __m128 cs = _mm_set1_ps(c);
+    auto* v = const_cast<float*>(vec.data());
+    auto* res = const_cast<float*>(result.data());
+    for (uint32_t i = 0; i < dim; i+=4) {
+        __m128 vs = _mm_load_ps(v);
+        __m128 prod = _mm_mul_ps(cs, vs);
+        _mm_store_ps(res, prod);
+        vs += 4;
+        res += 4;
     }
     return result;
 }
@@ -224,7 +267,7 @@ uint64_t projectRandoms(const vector<Vec>& randVecs, const Vec& values) {
 
 // onto unit vector
 Vec project(const Vec& randUnit, const Vec& vec) {
-    return scalerMult(dot(randUnit, vec), randUnit);
+    return scalarMult(dot(randUnit, vec), randUnit);
 }
 
 uint64_t alpha = 10;
@@ -551,17 +594,109 @@ vector<pair<float, uint32_t>> splitInTwo(vector<pair<float, uint32_t>>& group1) 
 }
 
 
-void print(vector<float>& ts) {
+void print(const vector<float>& ts) {
     for (float t: ts)
         std::cout << t << ", ";
     std::cout << std::endl;
 }
 
+vector<float> getMeans(const vector<Vec>& vecs) {
+    uint32_t dim = 100;
+    uint32_t numRows = vecs.size();
+    vector<double> sums(dim, 0);
+    for (auto& v : vecs) {
+        for (uint32_t i = 0; i < dim; ++i) {
+            sums[i] += v[i];
+        }
+    }
+    Vec means;
+    for (auto& sum : sums) {
+        means.push_back(sum / numRows);
+    }
+    return means;
+}
 
-void rehash(vector<pair<float, uint32_t>>& group, const vector<Vec>& points) {
-    auto u = randUniformUnitVec(100);
+Vec pca1(const vector<Vec>& vecs) {
+    auto dim = vecs[0].size();
+    auto means = getMeans(vecs);
+
+    auto r = randUniformUnitVec();
+
+    auto start = hclock::now();
+    for (auto c = 0; c < 10; ++c) {
+        Vec s(dim, 0);
+        for (auto& v : vecs) {
+            auto x = sub(v, means);
+            plusEq(s, scalarMult(dot(x, r), x));
+        }
+        auto lambda = dot(r, s);
+//        auto error = sub(scalarMult(lambda, r), s);
+
+        normalizeInPlace(s);
+        r = s;
+
+//        std::cout << "elapsed: " << duration_cast<milliseconds>(hclock::now() - start).count() << std::endl;
+//        std::cout << "pca, iteration: " << c << std::endl;
+//        std::cout << "error norm: " << norm(error) << std::endl;
+//        std::cout << "error: "; print(error);
+//        std::cout << "r: "; print(r);
+//        std::cout << std::endl;
+    }
+    return r;
+}
+
+
+vector<float> getMeans(vector<pair<float, uint32_t>>& group, const vector<Vec>& vecs) {
+    uint32_t dim = 100;
+    uint32_t numRows = group.size();
+    vector<double> sums(dim, 0);
+
+    for (auto& [hash, id] : group) {
+        auto& v = vecs[id];
+        for (uint32_t i = 0; i < dim; ++i) {
+            sums[i] += v[i];
+        }
+    }
+    Vec means;
+    for (auto& sum : sums) {
+        means.push_back(sum / numRows);
+    }
+    return means;
+}
+
+
+
+Vec pca1(vector<pair<float, uint32_t>>& group, const vector<Vec>& vecs) {
+    auto dim = vecs[0].size();
+    auto means = getMeans(group, vecs);
+
+    auto r = randUniformUnitVec();
+    for (auto c = 0; c < 10; ++c) {
+        Vec s(dim, 0);
+        for (auto& [hash, id] : group) {
+            auto& v = vecs[id];
+            auto x = sub(v, means);
+            plusEq(s, scalarMult(dot(x, r), x));
+        }
+        auto lambda = dot(r, s);
+//        auto error = sub(scalarMult(lambda, r), s);
+
+        normalizeInPlace(s);
+        r = s;
+
+//        std::cout << "pca, iteration: " << c << std::endl;
+//        std::cout << "error: "; print(error);
+//        std::cout << "error norm: " << norm(error);
+//        std::cout << "r: "; print(r);
+//        std::cout << std::endl;
+    }
+    return r;
+}
+
+void rehash(vector<pair<float, uint32_t>>& group, const vector<Vec>& vecs) {
+    auto u = randUniformUnitVec();
     for (auto& p : group) {
-        p.first = dot(u, points[p.second]);
+        p.first = dot(u, vecs[p.second]);
     }
 }
 
@@ -580,7 +715,7 @@ void splitRecursiveSingleThreaded(const vector<Vec>& points,vector<pair<float, u
 vector<pair<float, uint32_t>> buildInitialGroups(const vector<Vec>& points) {
     vector<pair<float, uint32_t>> group;
     auto numPoints = points.size();
-    auto u = randUniformUnitVec(100);
+    auto u = randUniformUnitVec();
     for (uint32_t i = 0; i < numPoints; ++i) {
         float hash = dot(u, points[i]);
         group.emplace_back(hash, i);
@@ -594,6 +729,7 @@ vector<pair<float, uint32_t>> buildInitialGroups(const vector<Vec>& points) {
 void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>>& result) {
     auto startTime = hclock::now();
     vector<KnnSet> idToKnn(points.size());
+
     for (auto iteration = 0; iteration < 10; ++iteration) {
         std::cout << "start iteration: " << iteration << ", time (s): " << duration_cast<seconds>(hclock::now() - startTime).count() << std::endl;
         auto group1 = buildInitialGroups(points);
