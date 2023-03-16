@@ -4,7 +4,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include <cassert>
 #include <algorithm>
 #include <queue>
 #include <random>
@@ -16,13 +15,9 @@
 #include <optional>
 #include <mutex>
 #include <limits>
-#include <queue>
 #include "io.h"
-//#include <boost/align/aligned_allocator.hpp>
-//#include <boost/container/flat_set.hpp>
 
 #include <immintrin.h>
-//using namespace std;
 
 using std::cout;
 using std::endl;
@@ -36,12 +31,7 @@ using hclock = std::chrono::high_resolution_clock;
 using std::unordered_map;
 using std::make_pair;
 using std::pair;
-
-//using std::vector;
-//template<class T>
-//using vector = std::vector<T, boost::alignment::aligned_allocator<T, sizeof(__m256)>>;
-
-
+using std::vector;
 using Vec = vector<float>;
 
 /**
@@ -327,15 +317,16 @@ vector<uint32_t> CalculateOneKnn(const vector<vector<float>> &data,
 struct KnnSet {
 private:
     vector<pair<float, uint32_t>> queue;
+    uint32_t size = 0;
     float lower_bound = std::numeric_limits<float>::max();
-//    boost::container::flat_set<uint32_t> set;
 public:
     KnnSet() {
-        queue.reserve(100);
+        queue.resize(101);
     }
 
     bool contains(uint32_t node) {
-        for (auto& [dist, id]: queue) {
+        for (uint32_t i = 0; i < size; ++i) {
+            auto id = queue[i].second;
             if (id == node) return true;
         }
         return false;
@@ -346,22 +337,20 @@ public:
     }
 
     void push(pair<float, uint32_t> nodePair) {
-//        set.insert(nodePair.second);
-        queue.emplace_back(std::move(nodePair));
-        std::push_heap(queue.begin(), queue.end());
+        queue[size] = std::move(nodePair);
+        size++;
+        std::push_heap(queue.begin(), queue.begin() + size);
     }
 
     void pop() {
-        std::pop_heap(queue.begin(), queue.end());
-//        auto& toRemove = queue.back();
-//        set.erase(toRemove.second);
-        queue.pop_back();
+        std::pop_heap(queue.begin(), queue.begin() + size);
+        size--;
     }
 
     void addCandidate(const uint32_t candidate_id, float dist) {
         if (contains(candidate_id)) {
             return; // already in set
-        } else if (queue.size() < 100) {
+        } else if (size < 100) {
             push(std::make_pair(dist, candidate_id));
             lower_bound = top().first;
         } else if (dist < lower_bound) {
@@ -373,7 +362,7 @@ public:
 
     vector<uint32_t> finalize() {
         vector<uint32_t> knn;
-        while (!queue.empty()) {
+        while (size) {
             knn.emplace_back(top().second);
             pop();
         }
