@@ -61,11 +61,6 @@ uint64_t maxGroupSize = 200; // will be around 600
 uint64_t groupingTime = 0;
 uint64_t processGroupsTime = 0;
 
-#ifdef LOCAL_RUN
-long timeBoundsMs = 60'000;
-#else
-long timeBoundsMs = 1'600'000;
-#endif
 
 
 
@@ -753,30 +748,55 @@ void splitRecursiveSingleThreaded(const vector<Vec>& points,vector<pair<float, u
 void splitNoSort(const vector<Vec>& points,vector<pair<float, uint32_t>>& group1, vector<vector<pair<float, uint32_t>>>& allGroups) {
     vector<vector<pair<float, uint32_t>>> stack;
     stack.push_back(group1);
+    std::mutex stack_mtx;
+    std::mutex allGroup_mtx;
 
-    while (!stack.empty()) {
-        auto group = stack.back(); stack.pop_back();
-        if (group.size() < maxGroupSize) {
-            allGroups.push_back(group);
-        } else {
-            // modify group in place
-            auto [min, max] = rehashMinMax(group, points);
-            auto mid = min + (max - min) / 2;
+    auto numPoints = points.size();
+    auto numThreads = std::thread::hardware_concurrency();
+    vector<std::thread> threads;
+    std::atomic<uint32_t> count = 0;
+    for (uint32_t t = 0; t < numThreads; ++t) {
+        threads.emplace_back([&]() {
+            while (count < numPoints) {
+                stack_mtx.lock();
+                if (!stack.empty()) {
+                    auto group = stack.back(); stack.pop_back();
+                    stack_mtx.unlock();
 
-            vector<pair<float, uint32_t>> low;
-            vector<pair<float, uint32_t>> hi;
-            for (auto& p : group) {
-                auto& [hash, id] = p;
-                if (hash <= mid) {
-                    low.push_back(p);
+                    if (group.size() < maxGroupSize) {
+                        count += group.size();
+                        std::lock_guard<std::mutex> guard(allGroup_mtx);
+                        allGroups.push_back(group);
+                    } else {
+                        // modify group in place
+                        auto [min, max] = rehashMinMax(group, points);
+                        auto mid = min + (max - min) / 2;
+
+                        vector<pair<float, uint32_t>> low;
+                        vector<pair<float, uint32_t>> hi;
+                        for (auto& p : group) {
+                            auto& [hash, id] = p;
+                            if (hash <= mid) {
+                                low.push_back(p);
+                            } else {
+                                hi.push_back(p);
+                            }
+                        }
+                        {
+                            std::lock_guard<std::mutex> guard(stack_mtx);
+                            stack.push_back(low);
+                            stack.push_back(hi);
+                        }
+                    }
                 } else {
-                    hi.push_back(p);
+                    stack_mtx.unlock();
                 }
             }
-            stack.push_back(low);
-            stack.push_back(hi);
-        }
+
+        });
     }
+
+    for (auto& thread: threads) { thread.join(); }
 }
 
 
@@ -839,10 +859,15 @@ vector<pair<float, uint32_t>> buildInitialGroups(const vector<Vec>& points) {
 
 
 void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>>& result) {
+#ifdef LOCAL_RUN
+    long timeBoundsMs = 60'000;
+#else
+    long timeBoundsMs = points.size() == 10'000 ? 20'000 : 1'600'000;
+#endif
+
     std::cout << "start run with time bound: " << timeBoundsMs << std::endl;
 
     auto startTime = hclock::now();
-    auto currentTime = startTime;
     vector<KnnSet> idToKnn(points.size());
 
     uint32_t iteration = 0;
@@ -852,14 +877,6 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
         auto group1 = buildInitialGroups(points);
         vector<vector<pair<float, uint32_t>>> groups;
         splitNoSort(points, group1, groups);
-
-        auto total = 0;
-        for (auto& g : groups) {
-            total += g.size() ;
-        }
-        std::cout << "check groups add up to total size: " << total << std::endl;
-        std::cout << "first group size: " << groups[0].size() << std::endl;
-        std::cout << "last group size: " << groups.back().size() << std::endl;
 
         auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
         groupingTime += groupDuration;
