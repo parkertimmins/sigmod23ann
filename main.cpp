@@ -18,25 +18,31 @@
 #include <limits>
 #include <queue>
 #include "io.h"
-
+//#include <boost/align/aligned_allocator.hpp>
+//#include <boost/container/flat_set.hpp>
 
 #include <immintrin.h>
-using namespace std;
+//using namespace std;
 
 using std::cout;
 using std::endl;
 using std::string;
-using std::vector;
 using std::chrono::high_resolution_clock;
 using std::chrono::duration_cast;
 using std::chrono::duration;
 using std::chrono::milliseconds;
 using std::chrono::seconds;
-using Vec = vector<float>;
 using hclock = std::chrono::high_resolution_clock;
+using std::unordered_map;
+using std::make_pair;
+using std::pair;
+
+//using std::vector;
+//template<class T>
+//using vector = std::vector<T, boost::alignment::aligned_allocator<T, sizeof(__m256)>>;
 
 
-
+using Vec = vector<float>;
 
 /**
  * Docs used
@@ -319,13 +325,13 @@ vector<uint32_t> CalculateOneKnn(const vector<vector<float>> &data,
 }
 
 struct KnnSet {
+private:
     vector<pair<float, uint32_t>> queue;
     float lower_bound = std::numeric_limits<float>::max();
-    vector<uint32_t> set;
-
+//    boost::container::flat_set<uint32_t> set;
+public:
     KnnSet() {
         queue.reserve(100);
-        set.resize(100 * 1.3, std::numeric_limits<unsigned>::max()); // dummy value
     }
 
     bool contains(uint32_t node) {
@@ -340,12 +346,15 @@ struct KnnSet {
     }
 
     void push(pair<float, uint32_t> nodePair) {
+//        set.insert(nodePair.second);
         queue.emplace_back(std::move(nodePair));
         std::push_heap(queue.begin(), queue.end());
     }
 
     void pop() {
         std::pop_heap(queue.begin(), queue.end());
+//        auto& toRemove = queue.back();
+//        set.erase(toRemove.second);
         queue.pop_back();
     }
 
@@ -397,7 +406,7 @@ void constructResultActual(const vector<Vec>& data, vector<vector<uint32_t>>& re
     iota(sample_indexes.begin(), sample_indexes.end(), 0);
 
     auto numThreads = std::thread::hardware_concurrency();
-    std::vector<std::thread> threads;
+    vector<std::thread> threads;
 
     Task<uint32_t> tasks(sample_indexes);
 
@@ -537,7 +546,7 @@ void constructResult(const vector<Vec>& points, vector<vector<uint32_t>>& result
     Task<uint64_t> tasks(keys);
 
     auto numThreads = std::thread::hardware_concurrency();
-    std::vector<std::thread> threads;
+    vector<std::thread> threads;
 
     for (uint32_t t = 0; t < numThreads; ++t) {
         threads.emplace_back([&]() {
@@ -750,7 +759,7 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
     auto startTime = hclock::now();
     vector<KnnSet> idToKnn(points.size());
 
-    for (auto iteration = 0; iteration < 2; ++iteration) {
+    for (auto iteration = 0; iteration < 10; ++iteration) {
         std::cout << "start iteration: " << iteration << ", time (s): " << duration_cast<seconds>(hclock::now() - startTime).count() << std::endl;
         auto group1 = buildInitialGroups(points);
         vector<vector<pair<float, uint32_t>>> groups;
@@ -765,9 +774,9 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
 
         auto startProcessing = hclock::now();
         auto numThreads = std::thread::hardware_concurrency();
-        std::vector<std::thread> threads;
+        vector<std::thread> threads;
         Task<vector<pair<float, uint32_t>>> tasks(groups);
-        atomic<uint32_t> count = 0;
+        std::atomic<uint32_t> count = 0;
         for (uint32_t t = 0; t < numThreads; ++t) {
             threads.emplace_back([&]() {
                 auto optGroup = tasks.getTask();
