@@ -360,12 +360,10 @@ public:
     }
 
     void addCandidate(const uint32_t candidate_id, float dist) {
-        if (contains(candidate_id)) {
-            return; // already in set
-        } else if (size < 100) {
+        if (size < 100 && !contains(candidate_id)) {
             push(std::make_pair(dist, candidate_id));
             lower_bound = top().first;
-        } else if (dist < lower_bound) {
+        } else if (dist < lower_bound && !contains(candidate_id)) {
             push(std::make_pair(dist, candidate_id));
             pop();
             lower_bound = top().first;
