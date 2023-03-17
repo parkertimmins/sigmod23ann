@@ -34,6 +34,7 @@ using std::make_pair;
 using std::pair;
 using std::vector;
 using Vec = vector<float>;
+using Range = pair<uint32_t, uint32_t>;
 
 /**
  * Docs used
@@ -388,12 +389,13 @@ public:
 
 
 void addCandidates(const vector<vector<float>> &points,
-                   const vector<uint32_t>& group,
+                   vector<uint32_t>& indices,
+                   Range range,
                    vector<KnnSet>& idToKnn) {
-    for (uint32_t i=0, groupLen=group.size(); i < groupLen-1; ++i) {
-        for (uint32_t j=i+1; j < groupLen; ++j) {
-            auto id1 = group[i];
-            auto id2 = group[j];
+    for (uint32_t i=range.first; i < range.second-1; ++i) {
+        for (uint32_t j=i+1; j < range.second; ++j) {
+            auto id1 = indices[i];
+            auto id2 = indices[j];
             float dist = distance128(points[id1], points[id2]);
             idToKnn[id1].addCandidate(id2, dist);
             idToKnn[id2].addCandidate(id1, dist);
@@ -808,7 +810,6 @@ void splitNoSortMulti(const vector<Vec>& points,vector<pair<float, uint32_t>>& g
 }
 
 // [first, second)
-using Range = pair<uint32_t, uint32_t>;
 vector<Range> splitRange(Range range, uint32_t numRanges) {
     uint32_t size = (range.second - range.first) / numRanges;
 
@@ -823,9 +824,10 @@ vector<Range> splitRange(Range range, uint32_t numRanges) {
 }
 
 pair<float, float> startBounds = {std::numeric_limits<float>::max(), std::numeric_limits<float>::min()};
-pair<float, float> getBounds(vector<vector<float>>& hashes, vector<uint32_t>& group, uint32_t depth) {
+pair<float, float> getBounds(vector<vector<float>>& hashes, std::vector<uint32_t>& indices, Range range, uint32_t depth) {
     auto [min, max] = startBounds;
-    for (auto& id : group) {
+    for (uint32_t i = range.first; i < range.second; ++i) {
+        auto id = indices[i];
         auto proj = hashes[id][depth];
         min = std::min(min, proj);
         max = std::max(max, proj);
@@ -843,10 +845,10 @@ uint32_t requiredHashFuncs(uint32_t numPoints, uint32_t maxBucketSize) {
     return numHashFuncs;
 }
 
-void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vector<vector<uint32_t>>& groups) {
+void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vector<Range>& ranges, vector<uint32_t>& indices) {
     auto numPoints = points.size();
     auto numThreads = std::thread::hardware_concurrency();
-    auto ranges = splitRange({0, numPoints}, numThreads);
+    auto hashRanges = splitRange({0, numPoints}, numThreads);
     vector<vector<float>> hashes(numPoints);
 
     vector<Vec> unitVecs(numHashFuncs);
@@ -860,7 +862,7 @@ void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vec
     vector<std::thread> threads;
     for (uint32_t t = 0; t < numThreads; ++t) {
         threads.emplace_back([&, t]() {
-            auto range = ranges[t];
+            auto range = hashRanges[t];
             for (uint32_t i = range.first; i < range.second; ++i) {
                 const Vec& vec = points[i];
                 vector<float>& hashSet = hashes[i];
@@ -878,10 +880,8 @@ void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vec
     std::cout << "group hash time: " << duration_cast<milliseconds>(hclock::now() - startHash).count() << std::endl;
     auto startRegroup = hclock::now();
 
-    vector<pair<uint32_t, vector<uint32_t>>> stack;
-    std::vector<uint32_t> group1(numPoints);
-    std::iota(group1.begin(), group1.end(), 0);
-    stack.emplace_back(0, group1);
+    vector<pair<uint32_t, Range>> stack;
+    stack.emplace_back(0, make_pair(0, numPoints));
     std::mutex stack_mtx;
     std::mutex groups_mtx;
 
@@ -892,26 +892,35 @@ void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vec
             while (count < numPoints) {
                 stack_mtx.lock();
                 if (!stack.empty()) {
-                    auto [depth, group] = stack.back(); stack.pop_back();
+                    auto [depth, range] = stack.back(); stack.pop_back();
                     stack_mtx.unlock();
+                    uint32_t rangeSize = range.second - range.first;
 
-                    if (group.size() < maxGroupSize || depth == numHashFuncs) {
-                        count += group.size();
+                    if (rangeSize < maxGroupSize || depth == numHashFuncs) {
+                        count += rangeSize;
                         std::lock_guard<std::mutex> guard(groups_mtx);
-                        groups.push_back(group);
+                        ranges.push_back(range);
                     } else {
-                        auto [min, max] = getBounds(hashes, group, depth);
+                        auto [min, max] = getBounds(hashes, indices, range, depth);
                         auto mid = min + (max - min) / 2;
 
-                        vector<uint32_t> low;
-                        vector<uint32_t> hi;
-                        for (auto& id : group) {
+                        auto rangeBegin = indices.begin() + range.first;
+                        auto rangeEnd = indices.begin() + range.second;
+
+                        auto middleIt = std::partition(rangeBegin, rangeEnd, [&](uint32_t id){
+                            //std::cout << "id: " << id << ", depth: " << depth;
+                            //std::cout << "hashes[id].size: " << hashes[id].size() << std::endl;
+
                             auto proj = hashes[id][depth];
-                            if (proj <= mid) { low.push_back(id); } else { hi.push_back(id); }
-                        }
+                            return proj <= mid;
+                        });
+
+                        uint32_t rangeHalfSize = middleIt - rangeBegin;
+                        Range lo = {range.first, range.first + rangeHalfSize};
+                        Range hi = {range.first + rangeHalfSize , range.second};
                         {
                             std::lock_guard<std::mutex> guard(stack_mtx);
-                            stack.emplace_back( depth+1, low);
+                            stack.emplace_back( depth+1, lo);
                             stack.emplace_back( depth+1, hi);
                         }
                     }
@@ -1055,14 +1064,17 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
 
     auto startTime = hclock::now();
     vector<KnnSet> idToKnn(points.size());
+    uint32_t numPoints = points.size();
 
     uint32_t iteration = 0;
     while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
         auto startGroup = hclock::now();
 
         uint32_t numHashFuncs = requiredHashFuncs(points.size(), 300);
-        vector<vector<uint32_t>> groups;
-        splitHorizontalThread(numHashFuncs, points, groups);
+        std::vector<uint32_t> indices(numPoints);
+        std::iota(indices.begin(), indices.end(), 0);
+        vector<Range> ranges;
+        splitHorizontalThread(numHashFuncs, points, ranges, indices);
 
         auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
         groupingTime += groupDuration;
@@ -1071,16 +1083,17 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
 
         auto numThreads = std::thread::hardware_concurrency();
         vector<std::thread> threads;
-        Task<vector<uint32_t>> tasks(groups);
+        Task<Range> tasks(ranges);
         std::atomic<uint32_t> count = 0;
         for (uint32_t t = 0; t < numThreads; ++t) {
             threads.emplace_back([&]() {
-                auto optGroup = tasks.getTask();
-                while (optGroup) {
-                    auto& grp = *optGroup;
-                    count += grp.size();
-                    addCandidates(points, grp, idToKnn);
-                    optGroup = tasks.getTask();
+                auto optRange = tasks.getTask();
+                while (optRange) {
+                    auto& range = *optRange;
+                    uint32_t rangeSize = range.second - range.first;
+                    count += rangeSize;
+                    addCandidates(points, indices, range, idToKnn);
+                    optRange= tasks.getTask();
                 }
             });
         }
