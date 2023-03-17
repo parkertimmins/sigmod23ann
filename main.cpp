@@ -16,7 +16,8 @@
 #include <mutex>
 #include <limits>
 #include "io.h"
-
+#include <smmintrin.h>
+#include <emmintrin.h>
 #include <immintrin.h>
 
 using std::cout;
@@ -56,7 +57,7 @@ uint32_t numProjections = 4;
 uint8_t numBuckets = 4; //std::numeric_limits<unsigned char>::max();
 
 
-uint64_t maxGroupSize = 200; // will be around 600
+uint64_t maxGroupSize = 200;
 
 uint64_t groupingTime = 0;
 uint64_t processGroupsTime = 0;
@@ -223,25 +224,18 @@ Vec scalarMult(float c, const Vec& vec) {
 }
 
 float dot(const Vec &lhs, const Vec &rhs) {
-    __m128 sum  = _mm_set1_ps(0);
+    float sum = 0;
     auto* r = const_cast<float*>(rhs.data());
     auto* l = const_cast<float*>(lhs.data());
     for (uint32_t i = 0; i < 100; i+=4) {
         __m128 rs = _mm_load_ps(r);
         __m128 ls = _mm_load_ps(l);
-        __m128 prod = _mm_mul_ps(rs, ls);
-        sum = _mm_add_ps(sum, prod);
+        __m128 dotOf4 = _mm_dp_ps(rs, ls, 0xFF);
+        sum += _mm_cvtss_f32(dotOf4);
         l += 4;
         r += 4;
     }
-
-    float sums[4] = {};
-    _mm_store_ps(sums, sum);
-    float ans = 0.0f;
-    for (float s: sums) {
-        ans += s;
-    }
-    return ans;
+    return sum;
 }
 
 
@@ -325,6 +319,22 @@ public:
     KnnSet() {
         queue.resize(101);
     }
+
+//    bool contains(uint32_t node) {
+//        __m128i pattern = _mm_set1_epi32(node);
+//
+//        auto* q = reinterpret_cast<__m128i*>(queue.data());
+//        for (uint32_t i = 0; i < 100; i+=2) {
+//            __m128i block = _mm_load_si128(q);
+//            auto match = _mm_movemask_epi8(_mm_cmpeq_epi32(pattern, block));
+//
+//            if (match & 0x00FF00FF) {
+//                return true;
+//            }
+//            q++;
+//        }
+//        return false;
+//    }
 
     bool contains(uint32_t node) {
         for (uint32_t i = 0; i < size; ++i) {
