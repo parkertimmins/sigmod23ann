@@ -19,8 +19,6 @@
 #include <smmintrin.h>
 #include <emmintrin.h>
 #include <immintrin.h>
-#include <oneapi/tbb/concurrent_vector.h>
-#include <oneapi/tbb/concurrent_queue.h>
 
 using std::cout;
 using std::endl;
@@ -758,117 +756,11 @@ void splitRecursiveSingleThreaded(const vector<Vec>& points,vector<pair<float, u
         splitRecursiveSingleThreaded(points, otherGroup, allGroups);
     }
 }
-//void splitNoSortMulti(const vector<Vec>& points,vector<pair<float, uint32_t>>& group1, vector<vector<pair<float, uint32_t>>>& allGroups) {
-//    vector<vector<pair<float, uint32_t>>> stack;
-//    stack.push_back(group1);
-//    std::mutex stack_mtx;
-//    std::mutex allGroup_mtx;
-//
-//    auto numPoints = points.size();
-//    auto numThreads = std::thread::hardware_concurrency();
-//    vector<std::thread> threads;
-//    std::atomic<uint32_t> count = 0;
-//    for (uint32_t t = 0; t < numThreads; ++t) {
-//        threads.emplace_back([&]() {
-//            while (count < numPoints) {
-//                stack_mtx.lock();
-//                if (!stack.empty()) {
-//                    auto group = stack.back(); stack.pop_back();
-//                    stack_mtx.unlock();
-//
-//                    uint32_t numSplits = 4;
-//                    if (group.size() < maxGroupSize) {
-//                        count += group.size();
-//                        std::lock_guard<std::mutex> guard(allGroup_mtx);
-//                        allGroups.push_back(group);
-//                    } else {
-//                        // modify group in place
-//                        auto [min, max] = rehashMinMax(group, points);
-//                        auto splitSize = (max - min) / numSplits;
-//
-//                        vector<vector<pair<float, uint32_t>>> splits(numSplits);
-//                        for (auto& p : group) {
-//                            auto& [hash, id] = p;
-//                            uint32_t splitIdx = (hash - min) / splitSize;
-//                            splitIdx = std::min(splitIdx, numSplits - 1);
-//                            splits[splitIdx].push_back(p);
-//                        }
-//                        {
-//                            std::lock_guard<std::mutex> guard(stack_mtx);
-//                            stack.insert(stack.end(), splits.begin(), splits.end());
-//                        }
-//                    }
-//                } else {
-//                    stack_mtx.unlock();
-//                }
-//            }
-//
-//        });
-//    }
-//
-//    for (auto& thread: threads) { thread.join(); }
-//}
-
-
-//void splitNoSortHalf(const vector<Vec>& points,vector<pair<float, uint32_t>>& group1, vector<vector<pair<float, uint32_t>>>& allGroups) {
-//    vector<vector<pair<float, uint32_t>>> stack;
-//    stack.push_back(group1);
-//    std::mutex stack_mtx;
-//    std::mutex allGroup_mtx;
-//
-//    auto numPoints = points.size();
-//    auto numThreads = std::thread::hardware_concurrency();
-//    vector<std::thread> threads;
-//    std::atomic<uint32_t> count = 0;
-//    for (uint32_t t = 0; t < numThreads; ++t) {
-//        threads.emplace_back([&]() {
-//            while (count < numPoints) {
-//                stack_mtx.lock();
-//                if (!stack.empty()) {
-//                    auto group = stack.back(); stack.pop_back();
-//                    stack_mtx.unlock();
-//
-//                    if (group.size() < maxGroupSize) {
-//                        count += group.size();
-//                        std::lock_guard<std::mutex> guard(allGroup_mtx);
-//                        allGroups.push_back(group);
-//                    } else {
-//                        // modify group in place
-//                        auto [min, max] = rehashMinMax(group, points);
-//                        auto mid = min + (max - min) / 2;
-//
-//                        vector<pair<float, uint32_t>> low;
-//                        vector<pair<float, uint32_t>> hi;
-//                        for (auto& p : group) {
-//                            auto& [hash, id] = p;
-//                            if (hash <= mid) {
-//                                low.push_back(p);
-//                            } else {
-//                                hi.push_back(p);
-//                            }
-//                        }
-//                        {
-//                            std::lock_guard<std::mutex> guard(stack_mtx);
-//                            stack.push_back(low);
-//                            stack.push_back(hi);
-//                        }
-//                    }
-//                } else {
-//                    stack_mtx.unlock();
-//                }
-//            }
-//
-//        });
-//    }
-//
-//    for (auto& thread: threads) { thread.join(); }
-//}
-
-
-
-void splitNoSort(const vector<Vec>& points,vector<pair<float, uint32_t>>& group1, tbb::concurrent_vector<vector<pair<float, uint32_t>>>& allGroups) {
-    tbb::concurrent_queue<vector<pair<float, uint32_t>>> queue;
-    queue.push(group1);
+void splitNoSortMulti(const vector<Vec>& points,vector<pair<float, uint32_t>>& group1, vector<vector<pair<float, uint32_t>>>& allGroups) {
+    vector<vector<pair<float, uint32_t>>> stack;
+    stack.push_back(group1);
+    std::mutex stack_mtx;
+    std::mutex allGroup_mtx;
 
     auto numPoints = points.size();
     auto numThreads = std::thread::hardware_concurrency();
@@ -877,42 +769,100 @@ void splitNoSort(const vector<Vec>& points,vector<pair<float, uint32_t>>& group1
     for (uint32_t t = 0; t < numThreads; ++t) {
         threads.emplace_back([&]() {
             while (count < numPoints) {
-                vector<pair<float, uint32_t>> group;
-                if (queue.try_pop(group)) {
-                    // modify group in place
-                    auto [min, max] = rehashMinMax(group, points);
-                    auto mid = min + (max - min) / 2;
+                stack_mtx.lock();
+                if (!stack.empty()) {
+                    auto group = stack.back(); stack.pop_back();
+                    stack_mtx.unlock();
 
-                    vector<pair<float, uint32_t>> low;
-                    vector<pair<float, uint32_t>> hi;
-                    for (auto& p : group) {
-                        auto& [hash, id] = p;
-                        if (hash <= mid) {
-                            low.push_back(p);
-                        } else {
-                            hi.push_back(p);
+                    uint32_t numSplits = 4;
+                    if (group.size() < maxGroupSize) {
+                        count += group.size();
+                        std::lock_guard<std::mutex> guard(allGroup_mtx);
+                        allGroups.push_back(group);
+                    } else {
+                        // modify group in place
+                        auto [min, max] = rehashMinMax(group, points);
+                        auto splitSize = (max - min) / numSplits;
+
+                        vector<vector<pair<float, uint32_t>>> splits(numSplits);
+                        for (auto& p : group) {
+                            auto& [hash, id] = p;
+                            uint32_t splitIdx = (hash - min) / splitSize;
+                            splitIdx = std::min(splitIdx, numSplits - 1);
+                            splits[splitIdx].push_back(p);
+                        }
+                        {
+                            std::lock_guard<std::mutex> guard(stack_mtx);
+                            stack.insert(stack.end(), splits.begin(), splits.end());
                         }
                     }
-
-                    if (low.size() < maxGroupSize) {
-                        count += low.size();
-                        allGroups.push_back(std::move(low));
-                    }  else {
-                        queue.push(std::move(low));
-                    }
-                    if (hi.size() < maxGroupSize) {
-                        count += hi.size();
-                        allGroups.push_back(std::move(hi));
-                    }  else {
-                        queue.push(std::move(hi));
-                    }
+                } else {
+                    stack_mtx.unlock();
                 }
             }
+
         });
     }
 
     for (auto& thread: threads) { thread.join(); }
 }
+
+
+void splitNoSortHalf(const vector<Vec>& points,vector<pair<float, uint32_t>>& group1, vector<vector<pair<float, uint32_t>>>& allGroups) {
+    vector<vector<pair<float, uint32_t>>> stack;
+    stack.push_back(group1);
+    std::mutex stack_mtx;
+    std::mutex allGroup_mtx;
+
+    auto numPoints = points.size();
+    auto numThreads = std::thread::hardware_concurrency();
+    vector<std::thread> threads;
+    std::atomic<uint32_t> count = 0;
+    for (uint32_t t = 0; t < numThreads; ++t) {
+        threads.emplace_back([&]() {
+            while (count < numPoints) {
+                stack_mtx.lock();
+                if (!stack.empty()) {
+                    auto group = stack.back(); stack.pop_back();
+                    stack_mtx.unlock();
+
+                    if (group.size() < maxGroupSize) {
+                        count += group.size();
+                        std::lock_guard<std::mutex> guard(allGroup_mtx);
+                        allGroups.push_back(group);
+                    } else {
+                        // modify group in place
+                        auto [min, max] = rehashMinMax(group, points);
+                        auto mid = min + (max - min) / 2;
+
+                        vector<pair<float, uint32_t>> low;
+                        vector<pair<float, uint32_t>> hi;
+                        for (auto& p : group) {
+                            auto& [hash, id] = p;
+                            if (hash <= mid) {
+                                low.push_back(p);
+                            } else {
+                                hi.push_back(p);
+                            }
+                        }
+                        {
+                            std::lock_guard<std::mutex> guard(stack_mtx);
+                            stack.push_back(low);
+                            stack.push_back(hi);
+                        }
+                    }
+                } else {
+                    stack_mtx.unlock();
+                }
+            }
+
+        });
+    }
+
+    for (auto& thread: threads) { thread.join(); }
+}
+
+
 
 
 void splitRecursiveNoSort(const vector<Vec>& points,vector<pair<float, uint32_t>>& group, vector<vector<pair<float, uint32_t>>>& allGroups) {
@@ -993,8 +943,8 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
 
         auto group1 = buildInitialGroups(points);
 
-        tbb::concurrent_vector<vector<pair<float, uint32_t>>> groups;
-        splitNoSort(points, group1, groups);
+        vector<vector<pair<float, uint32_t>>> groups;
+        splitNoSortHalf(points, group1, groups);
 
         auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
         groupingTime += groupDuration;
@@ -1003,7 +953,7 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
 
         auto numThreads = std::thread::hardware_concurrency();
         vector<std::thread> threads;
-        Task<vector<pair<float, uint32_t>>, tbb::concurrent_vector<vector<pair<float, uint32_t>>>> tasks(groups);
+        Task<vector<pair<float, uint32_t>>, vector<vector<pair<float, uint32_t>>>> tasks(groups);
         std::atomic<uint32_t> count = 0;
         for (uint32_t t = 0; t < numThreads; ++t) {
             threads.emplace_back([&]() {
