@@ -388,12 +388,12 @@ public:
 
 
 void addCandidates(const vector<vector<float>> &points,
-                   const vector<pair<float, uint32_t>>& group,
+                   const vector<uint32_t>& group,
                    vector<KnnSet>& idToKnn) {
     for (uint32_t i=0, groupLen=group.size(); i < groupLen-1; ++i) {
         for (uint32_t j=i+1; j < groupLen; ++j) {
-            auto id1 = group[i].second;
-            auto id2 = group[j].second;
+            auto id1 = group[i];
+            auto id2 = group[j];
             float dist = distance128(points[id1], points[id2]);
             idToKnn[id1].addCandidate(id2, dist);
             idToKnn[id2].addCandidate(id1, dist);
@@ -807,6 +807,125 @@ void splitNoSortMulti(const vector<Vec>& points,vector<pair<float, uint32_t>>& g
     for (auto& thread: threads) { thread.join(); }
 }
 
+// [first, second)
+using Range = pair<uint32_t, uint32_t>;
+vector<Range> splitRange(Range range, uint32_t numRanges) {
+    uint32_t size = (range.second - range.first) / numRanges;
+
+    vector<Range> ranges;
+    auto start = range.first;
+    for (uint32_t i = 0; i < numRanges; i++) {
+        uint32_t end = i == numRanges - 1 ? range.second : start + size;
+        ranges.emplace_back(start, end);
+        start = end;
+    }
+    return ranges;
+}
+
+pair<float, float> startBounds = {std::numeric_limits<float>::max(), std::numeric_limits<float>::min()};
+pair<float, float> getBounds(vector<vector<float>>& hashes, vector<uint32_t>& group, uint32_t depth) {
+    auto [min, max] = startBounds;
+    for (auto& id : group) {
+        auto proj = hashes[id][depth];
+        min = std::min(min, proj);
+        max = std::max(max, proj);
+    }
+    return {min, max};
+}
+
+uint32_t requiredHashFuncs(uint32_t numPoints, uint32_t maxBucketSize) {
+    uint32_t groupSize = numPoints;
+    uint32_t numHashFuncs = 0;
+    while (groupSize > maxBucketSize) {
+        groupSize /= 2;
+        numHashFuncs++;
+    }
+    return numHashFuncs;
+}
+
+void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vector<vector<uint32_t>>& groups) {
+    auto numPoints = points.size();
+    auto numThreads = std::thread::hardware_concurrency();
+    auto ranges = splitRange({0, numPoints}, numThreads);
+    vector<vector<float>> hashes(numPoints);
+
+    vector<Vec> unitVecs(numHashFuncs);
+    for (uint32_t h = 0; h < numHashFuncs; ++h) {
+        unitVecs[h] = randUniformUnitVec();
+    }
+
+    auto startHash = hclock::now();
+
+    // compute all hash function values
+    vector<std::thread> threads;
+    for (uint32_t t = 0; t < numThreads; ++t) {
+        threads.emplace_back([&, t]() {
+            auto range = ranges[t];
+            for (uint32_t i = range.first; i < range.second; ++i) {
+                const Vec& vec = points[i];
+                vector<float>& hashSet = hashes[i];
+                for (uint32_t h = 0; h < numHashFuncs; ++h) {
+                    const auto& unitVec = unitVecs[h];
+                    float proj = dot(unitVec, vec);
+                    hashSet.push_back(proj);
+                }
+//                std::cout << "hashes size: " << hashes[i].size() << std::endl;
+            }
+        });
+    }
+    for (auto& thread: threads) { thread.join(); }
+
+    std::cout << "group hash time: " << duration_cast<milliseconds>(hclock::now() - startHash).count() << std::endl;
+    auto startRegroup = hclock::now();
+
+    vector<pair<uint32_t, vector<uint32_t>>> stack;
+    std::vector<uint32_t> group1(numPoints);
+    std::iota(group1.begin(), group1.end(), 0);
+    stack.emplace_back(0, group1);
+    std::mutex stack_mtx;
+    std::mutex groups_mtx;
+
+    threads.clear();
+    std::atomic<uint32_t> count = 0;
+    for (uint32_t t = 0; t < numThreads; ++t) {
+        threads.emplace_back([&]() {
+            while (count < numPoints) {
+                stack_mtx.lock();
+                if (!stack.empty()) {
+                    auto [depth, group] = stack.back(); stack.pop_back();
+                    stack_mtx.unlock();
+
+                    if (group.size() < maxGroupSize || depth == numHashFuncs) {
+                        count += group.size();
+                        std::lock_guard<std::mutex> guard(groups_mtx);
+                        groups.push_back(group);
+                    } else {
+                        auto [min, max] = getBounds(hashes, group, depth);
+                        auto mid = min + (max - min) / 2;
+
+                        vector<uint32_t> low;
+                        vector<uint32_t> hi;
+                        for (auto& id : group) {
+                            auto proj = hashes[id][depth];
+                            if (proj <= mid) { low.push_back(id); } else { hi.push_back(id); }
+                        }
+                        {
+                            std::lock_guard<std::mutex> guard(stack_mtx);
+                            stack.emplace_back( depth+1, low);
+                            stack.emplace_back( depth+1, hi);
+                        }
+                    }
+                } else {
+                    stack_mtx.unlock();
+                }
+            }
+
+        });
+    }
+    for (auto& thread: threads) { thread.join(); }
+
+    std::cout << "group regroup time: " << duration_cast<milliseconds>(hclock::now() - startRegroup).count() << std::endl;
+}
 
 void splitNoSortHalf(const vector<Vec>& points,vector<pair<float, uint32_t>>& group1, vector<vector<pair<float, uint32_t>>>& allGroups) {
     vector<vector<pair<float, uint32_t>>> stack;
@@ -941,10 +1060,9 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
     while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
         auto startGroup = hclock::now();
 
-        auto group1 = buildInitialGroups(points);
-
-        vector<vector<pair<float, uint32_t>>> groups;
-        splitNoSortHalf(points, group1, groups);
+        uint32_t numHashFuncs = requiredHashFuncs(points.size(), 200);
+        vector<vector<uint32_t>> groups;
+        splitHorizontalThread(numHashFuncs, points, groups);
 
         auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
         groupingTime += groupDuration;
@@ -953,7 +1071,7 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
 
         auto numThreads = std::thread::hardware_concurrency();
         vector<std::thread> threads;
-        Task<vector<pair<float, uint32_t>>, vector<vector<pair<float, uint32_t>>>> tasks(groups);
+        Task<vector<uint32_t>> tasks(groups);
         std::atomic<uint32_t> count = 0;
         for (uint32_t t = 0; t < numThreads; ++t) {
             threads.emplace_back([&]() {
