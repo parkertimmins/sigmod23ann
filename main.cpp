@@ -1060,7 +1060,7 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
     while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
         auto startGroup = hclock::now();
 
-        uint32_t numHashFuncs = requiredHashFuncs(points.size(), 200);
+        uint32_t numHashFuncs = requiredHashFuncs(points.size(), 300);
         vector<vector<uint32_t>> groups;
         splitHorizontalThread(numHashFuncs, points, groups);
 
