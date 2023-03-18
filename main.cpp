@@ -917,23 +917,34 @@ void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vec
                     Range lo = {range.first, range.first + rangeHalfSize};
                     Range hi = {range.first + rangeHalfSize , range.second};
 
+                    auto loSize = getRangeSize(lo);
+                    auto hiSize = getRangeSize(hi);
 
-                    if (getRangeSize(lo) < maxGroupSize || depth+1 == numHashFuncs) {
+                    if ((loSize < maxGroupSize && hiSize < maxGroupSize) || depth+1 == numHashFuncs) {
                         count += getRangeSize(lo);
-                        std::lock_guard<std::mutex> guard(groups_mtx);
-                        ranges.push_back(lo);
-                    } else {
-                        std::lock_guard<std::mutex> guard(stack_mtx);
-                        stack.emplace_back(depth+1, lo);
-                    }
-
-                    if (getRangeSize(hi) < maxGroupSize || depth+1 == numHashFuncs) {
                         count += getRangeSize(hi);
                         std::lock_guard<std::mutex> guard(groups_mtx);
+                        ranges.push_back(lo);
                         ranges.push_back(hi);
                     } else {
-                        range = hi;
-                        goto have_range_to_split;
+                        if (loSize < maxGroupSize) {
+                            count += getRangeSize(lo);
+                            std::lock_guard<std::mutex> guard(groups_mtx);
+                            ranges.push_back(lo);
+                        } else {
+                            std::lock_guard<std::mutex> guard(stack_mtx);
+                            stack.emplace_back(depth+1, lo);
+                        }
+
+                        if (hiSize < maxGroupSize) {
+                            count += getRangeSize(hi);
+                            std::lock_guard<std::mutex> guard(groups_mtx);
+                            ranges.push_back(hi);
+                        } else {
+                            range = hi;
+                            depth++;
+                            goto have_range_to_split;
+                        }
                     }
                 } else {
                     stack_mtx.unlock();
