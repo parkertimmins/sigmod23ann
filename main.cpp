@@ -845,6 +845,10 @@ uint32_t requiredHashFuncs(uint32_t numPoints, uint32_t maxBucketSize) {
     return numHashFuncs;
 }
 
+uint32_t getRangeSize(Range& range) {
+    return range.second - range.first;
+}
+
 void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vector<Range>& ranges, vector<uint32_t>& indices) {
     auto numPoints = points.size();
     auto numThreads = std::thread::hardware_concurrency();
@@ -892,37 +896,44 @@ void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vec
             while (count < numPoints) {
                 stack_mtx.lock();
                 if (!stack.empty()) {
+
                     auto [depth, range] = stack.back(); stack.pop_back();
                     stack_mtx.unlock();
+
+                have_range_to_split:
                     uint32_t rangeSize = range.second - range.first;
 
-                    if (rangeSize < maxGroupSize || depth == numHashFuncs) {
-                        count += rangeSize;
+                    auto [min, max] = getBounds(hashes, indices, range, depth);
+                    auto mid = min + (max - min) / 2;
+
+                    auto rangeBegin = indices.begin() + range.first;
+                    auto rangeEnd = indices.begin() + range.second;
+
+                    auto middleIt = std::partition(rangeBegin, rangeEnd, [&](uint32_t id){
+                        return hashes[id][depth] <= mid;
+                    });
+
+                    uint32_t rangeHalfSize = middleIt - rangeBegin;
+                    Range lo = {range.first, range.first + rangeHalfSize};
+                    Range hi = {range.first + rangeHalfSize , range.second};
+
+
+                    if (getRangeSize(lo) < maxGroupSize || depth+1 == numHashFuncs) {
+                        count += getRangeSize(lo);
                         std::lock_guard<std::mutex> guard(groups_mtx);
-                        ranges.push_back(range);
+                        ranges.push_back(lo);
                     } else {
-                        auto [min, max] = getBounds(hashes, indices, range, depth);
-                        auto mid = min + (max - min) / 2;
+                        std::lock_guard<std::mutex> guard(stack_mtx);
+                        stack.emplace_back(depth+1, lo);
+                    }
 
-                        auto rangeBegin = indices.begin() + range.first;
-                        auto rangeEnd = indices.begin() + range.second;
-
-                        auto middleIt = std::partition(rangeBegin, rangeEnd, [&](uint32_t id){
-                            //std::cout << "id: " << id << ", depth: " << depth;
-                            //std::cout << "hashes[id].size: " << hashes[id].size() << std::endl;
-
-                            auto proj = hashes[id][depth];
-                            return proj <= mid;
-                        });
-
-                        uint32_t rangeHalfSize = middleIt - rangeBegin;
-                        Range lo = {range.first, range.first + rangeHalfSize};
-                        Range hi = {range.first + rangeHalfSize , range.second};
-                        {
-                            std::lock_guard<std::mutex> guard(stack_mtx);
-                            stack.emplace_back( depth+1, lo);
-                            stack.emplace_back( depth+1, hi);
-                        }
+                    if (getRangeSize(hi) < maxGroupSize || depth+1 == numHashFuncs) {
+                        count += getRangeSize(hi);
+                        std::lock_guard<std::mutex> guard(groups_mtx);
+                        ranges.push_back(hi);
+                    } else {
+                        range = hi;
+                        goto have_range_to_split;
                     }
                 } else {
                     stack_mtx.unlock();
