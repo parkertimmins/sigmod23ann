@@ -318,6 +318,7 @@ vector<uint32_t> CalculateOneKnn(const vector<vector<float>> &data,
 struct KnnSet {
 private:
     vector<pair<float, uint32_t>> queue;
+    std::unordered_set<uint32_t> set;
     uint32_t size = 0;
     float lower_bound = std::numeric_limits<float>::max();
 public:
@@ -342,11 +343,7 @@ public:
 //    }
 
     bool contains(uint32_t node) {
-        for (uint32_t i = 0; i < size; ++i) {
-            auto id = queue[i].second;
-            if (id == node) return true;
-        }
-        return false;
+        return set.find(node) != set.end();
     }
 
     pair<float, uint32_t>& top() {
@@ -354,6 +351,7 @@ public:
     }
 
     void push(pair<float, uint32_t> nodePair) {
+        set.insert(nodePair.second);
         queue[size] = std::move(nodePair);
         size++;
         std::push_heap(queue.begin(), queue.begin() + size);
@@ -362,6 +360,7 @@ public:
     void pop() {
         std::pop_heap(queue.begin(), queue.begin() + size);
         size--;
+        set.erase(queue[size].second);
     }
 
     void addCandidate(const uint32_t candidate_id, float dist) {
