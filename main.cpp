@@ -406,26 +406,27 @@ public:
             lower_bound = std::max(lower_bound, dist);
         } else if (dist < lower_bound) {
             float secondMaxVal = std::numeric_limits<float>::min();
+            uint32_t secondMaxId = -1;
             float maxVal = std::numeric_limits<float>::min();
             uint32_t maxIdx = -1;
+            uint32_t maxId = -1;
             for (uint32_t i = 0; i < size; ++i) {
                 auto& [otherDist, id] = queue[i];
                 if (id == candidate_id) {
                     return;
                 }
 
-                if (otherDist > maxVal) {
+                if (otherDist > maxVal || (otherDist == maxVal && maxId < id)) {
                     secondMaxVal = maxVal;
+                    secondMaxId = maxId;
                     maxVal = otherDist;
+                    maxId = id;
                     maxIdx = i;
-                } else if (otherDist > secondMaxVal) {
+                } else if (otherDist > secondMaxVal || (otherDist == secondMaxVal && secondMaxId < id)) {
                     secondMaxVal = otherDist;
+                    secondMaxId = id;
                 }
             }
-
-//            if (maxIdx != size-1) {
-//                secondMaxVal = std::max(secondMaxVal, queue[size-1].first);
-//            }
 
             queue[maxIdx] = {dist, candidate_id};
             lower_bound = std::max(secondMaxVal, dist);
