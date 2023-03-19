@@ -69,6 +69,8 @@ uint64_t maxGroupSize = 200;
 uint64_t groupingTime = 0;
 uint64_t processGroupsTime = 0;
 
+PerfEvent perf;
+uint32_t perfScale = 1'000'000;
 
 
 
@@ -929,6 +931,7 @@ void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vec
     }
 
     auto startHash = hclock::now();
+    perf.startCounters();
 
     // compute all hash function values
     vector<std::thread> threads;
@@ -949,8 +952,13 @@ void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vec
     }
     for (auto& thread: threads) { thread.join(); }
 
-    std::cout << "group hash time: " << duration_cast<milliseconds>(hclock::now() - startHash).count() << std::endl;
+    perf.stopCounters();
+    std::cout << "group hash\n";
+    perf.printReport(std::cout, perfScale);
+    std::cout << "group hash time: " << duration_cast<milliseconds>(hclock::now() - startHash).count() << std::endl << std::endl;
+
     auto startRegroup = hclock::now();
+    perf.startCounters();
 
     vector<pair<uint32_t, Range>> stack;
     stack.emplace_back(0, make_pair(0, numPoints));
@@ -1005,6 +1013,9 @@ void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vec
     }
     for (auto& thread: threads) { thread.join(); }
 
+    perf.stopCounters();
+    std::cout << "group regoup\n";
+    perf.printReport(std::cout, perfScale);
     std::cout << "group regroup time: " << duration_cast<milliseconds>(hclock::now() - startRegroup).count() << std::endl;
 }
 
@@ -1140,6 +1151,7 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
 
     uint32_t iteration = 0;
     while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
+        std::cout << "Iteration: " << iteration << std::endl;
         auto startGroup = hclock::now();
 
         uint32_t numHashFuncs = requiredHashFuncs(points.size(), 300);
@@ -1150,7 +1162,10 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
 
         auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
         groupingTime += groupDuration;
-        std::cout << "iteration: " << iteration << ", group time: " << groupDuration << std::endl;
+        std::cout << endl;
+
+
+        perf.startCounters();
         auto startProcessing = hclock::now();
 
         auto numThreads = std::thread::hardware_concurrency();
@@ -1174,9 +1189,15 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
 
         auto processingDuration = duration_cast<milliseconds>(hclock::now() - startProcessing).count();
         processGroupsTime += processingDuration;
-        std::cout << "iteration: " << iteration << ", processing time: " << processingDuration << std::endl;
+
+        perf.stopCounters();
+        std::cout << "processing\n";
+        perf.printReport(std::cout, perfScale);
+        std::cout << "processing time: " << processingDuration << std::endl;
+        std::cout << "--------------------------------------------------------------------------------------------------------" << std::endl;
 
         iteration++;
+        perf.startCounters();
     }
 
     for (uint32_t id = 0; id < points.size(); ++id) {
