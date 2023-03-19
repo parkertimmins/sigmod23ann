@@ -400,31 +400,27 @@ public:
         size++;
     }
 
+    // This may misorder nodes of equal sizes
     void addCandidate(const uint32_t candidate_id, float dist) {
         if (size < 100 && !contains(candidate_id)) {
             append({dist, candidate_id});
             lower_bound = std::max(lower_bound, dist);
         } else if (dist < lower_bound) {
             float secondMaxVal = std::numeric_limits<float>::min();
-            uint32_t secondMaxId = -1;
             float maxVal = std::numeric_limits<float>::min();
             uint32_t maxIdx = -1;
-            uint32_t maxId = -1;
             for (uint32_t i = 0; i < size; ++i) {
                 auto& [otherDist, id] = queue[i];
                 if (id == candidate_id) {
                     return;
                 }
 
-                if (otherDist > maxVal || (otherDist == maxVal && maxId < id)) {
+                if (otherDist > maxVal) {
                     secondMaxVal = maxVal;
-                    secondMaxId = maxId;
                     maxVal = otherDist;
-                    maxId = id;
                     maxIdx = i;
-                } else if (otherDist > secondMaxVal || (otherDist == secondMaxVal && secondMaxId < id)) {
+                } else if (otherDist > secondMaxVal) {
                     secondMaxVal = otherDist;
-                    secondMaxId = id;
                 }
             }
 
@@ -432,6 +428,39 @@ public:
             lower_bound = std::max(secondMaxVal, dist);
         }
     }
+
+//    void addCandidate(const uint32_t candidate_id, float dist) {
+//        if (size < 100 && !contains(candidate_id)) {
+//            append({dist, candidate_id});
+//            lower_bound = std::max(lower_bound, dist);
+//        } else if (dist < lower_bound) {
+//            float secondMaxVal = std::numeric_limits<float>::min();
+//            uint32_t secondMaxId = -1;
+//            float maxVal = std::numeric_limits<float>::min();
+//            uint32_t maxIdx = -1;
+//            uint32_t maxId = -1;
+//            for (uint32_t i = 0; i < size; ++i) {
+//                auto& [otherDist, id] = queue[i];
+//                if (id == candidate_id) {
+//                    return;
+//                }
+//
+//                if (otherDist > maxVal || (otherDist == maxVal && maxId > id)) {
+//                    secondMaxVal = maxVal;
+//                    secondMaxId = maxId;
+//                    maxVal = otherDist;
+//                    maxId = id;
+//                    maxIdx = i;
+//                } else if (otherDist > secondMaxVal || (otherDist == secondMaxVal && secondMaxId > id)) {
+//                    secondMaxVal = otherDist;
+//                    secondMaxId = id;
+//                }
+//            }
+//
+//            queue[maxIdx] = {dist, candidate_id};
+//            lower_bound = std::max(secondMaxVal, dist);
+//        }
+//    }
 
     vector<uint32_t> finalize() {
         std::sort(queue.begin(), queue.begin() + size);
@@ -530,17 +559,51 @@ public:
 
 
 
-void addCandidates(const vector<vector<float>> &points,
+void addCandidates1(const vector<vector<float>> &points,
                    vector<uint32_t>& indices,
                    Range range,
                    vector<KnnSetScannable>& idToKnn) {
     for (uint32_t i=range.first; i < range.second-1; ++i) {
+        auto id1 = indices[i];
+        auto knn1 = idToKnn[id1];
         for (uint32_t j=i+1; j < range.second; ++j) {
-            auto id1 = indices[i];
             auto id2 = indices[j];
             float dist = distance128(points[id1], points[id2]);
-            idToKnn[id1].addCandidate(id2, dist);
+            knn1.addCandidate(id2, dist);
             idToKnn[id2].addCandidate(id1, dist);
+        }
+    }
+}
+
+void addCandidates(const vector<vector<float>> &points,
+                   vector<uint32_t>& indices,
+                   Range range,
+                   vector<KnnSetScannable>& idToKnn,
+                   vector<vector<float>>& distances) {
+    auto rangeSize = range.second - range.first;
+
+    distances.resize(rangeSize);
+    for (auto& v: distances) {
+        v.resize(rangeSize);
+    }
+
+    for (uint32_t i=range.first, k=0; i < range.second-1; ++i, ++k) {
+        for (uint32_t j=i+1, l=k+1; j < range.second; ++j, ++l) {
+            float dist = distance128(points[indices[i]], points[indices[j]]);
+            distances[k][l] = dist;
+            distances[l][k] = dist;
+        }
+    }
+
+    for (uint32_t i=range.first, k=0; i < range.second; ++i, ++k) {
+        auto id1 = indices[i];
+        auto& knn1 = idToKnn[id1];
+        auto& dists = distances[k];
+        for (uint32_t j=range.first, l=0; j < range.second; ++j, ++l) {
+            if (k == l) continue;
+            float dist = dists[l];
+            auto id2 = indices[j];
+            knn1.addCandidate(id2, dist);
         }
     }
 }
@@ -1196,7 +1259,7 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
     if(getenv("LOCAL_RUN")) {
         timeBoundsMs = 60'000;
     } else {
-        timeBoundsMs = points.size() == 10'000 ? 30'000 : 1'600'000;
+        timeBoundsMs = points.size() == 10'000 ? 20'000 : 1'600'000;
     }
 
     std::cout << "start run with time bound: " << timeBoundsMs << std::endl;
@@ -1229,11 +1292,12 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
         for (uint32_t t = 0; t < numThreads; ++t) {
             threads.emplace_back([&]() {
                 auto optRange = tasks.getTask();
+                vector<vector<float>> distCache;
                 while (optRange) {
                     auto& range = *optRange;
                     uint32_t rangeSize = range.second - range.first;
                     count += rangeSize;
-                    addCandidates(points, indices, range, idToKnn);
+                    addCandidates(points, indices, range, idToKnn, distCache);
                     optRange= tasks.getTask();
                 }
             });
