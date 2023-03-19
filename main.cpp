@@ -20,6 +20,7 @@
 #include <smmintrin.h>
 #include <emmintrin.h>
 #include <immintrin.h>
+#include "thirdparty/perfevent/PerfEvent.hpp"
 
 using std::cout;
 using std::endl;
@@ -364,7 +365,7 @@ struct Bloom {
         bits[byteIdx] |= (1 << bitOffsetInByte);
     }
 
-    uint32_t hash(uint32_t item) const {
+    [[nodiscard]] uint32_t hash(uint32_t item) const {
         return __builtin_ia32_crc32si(seed, item);
     }
 
@@ -379,7 +380,6 @@ private:
     vector<pair<float, uint32_t>> queue;
     uint32_t size = 0;
     float lower_bound = std::numeric_limits<float>::max();
-    Bloom filter;
 public:
     KnnSet() {
         queue.resize(101);
@@ -401,11 +401,12 @@ public:
 //        return false;
 //    }
 
+
     bool contains(uint32_t node) {
-        if (filter.mightContain(node)) {
-            for (uint32_t i = 0; i < size; ++i) {
-                auto id = queue[i].second;
-                if (id == node) return true;
+        for (uint32_t i = 0; i < size; ++i) {
+            auto id = queue[i].second;
+            if (id == node) {
+                return true;
             }
         }
         return false;
@@ -419,15 +420,15 @@ public:
         queue[size] = std::move(nodePair);
         size++;
         std::push_heap(queue.begin(), queue.begin() + size);
-
-        if (filter.numElements >= filter.maxElements) {
-            filter.clear();
-            for (uint32_t i = 0; i < size; ++i) {
-                filter.set(queue[i].second);
-            }
-        } else {
-            filter.set(nodePair.second);
-        }
+//
+//        if (filter.numElements >= filter.maxElements) {
+//            filter.clear();
+//            for (uint32_t i = 0; i < size; ++i) {
+//                filter.set(queue[i].second);
+//            }
+//        } else {
+//            filter.set(nodePair.second);
+//        }
     }
 
     void pop() {
