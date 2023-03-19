@@ -338,9 +338,10 @@ struct Bloom {
         auto byteIdx = bitIdx >> 3;
         auto bitOffsetInByte = bitIdx & bitOffsetInByteMask;
 
-        if (bits[byteIdx] >> bitOffsetInByte) {
+        if (bits[byteIdx] & (1 << bitOffsetInByte)) {
             return true;
         }
+        numElements++;
         bits[byteIdx] |= (1 << bitOffsetInByte);
         return false;
     }
@@ -350,13 +351,7 @@ struct Bloom {
         auto bitIdx = h & bitOffsetMask;
         auto byteIdx = bitIdx >> 3;
         auto bitOffsetInByte = bitIdx & bitOffsetInByteMask;
-
-        std::cout << std::hex;
-        std::cout << "h: " << h << std::endl;
-        std::cout << "bitIdx: " << bitIdx << std::endl;
-        std::cout << "byteIdx: " << byteIdx << std::endl;
-        std::cout << "bitOffsetInByte: " << bitOffsetInByte << std::endl;
-        return bits[byteIdx] >> bitOffsetInByte;
+        return bits[byteIdx] & (1 << bitOffsetInByte);
     }
 
     void set(uint32_t item) {
@@ -369,11 +364,12 @@ struct Bloom {
         bits[byteIdx] |= (1 << bitOffsetInByte);
     }
 
-    uint32_t hash(uint32_t item) {
+    uint32_t hash(uint32_t item) const {
         return __builtin_ia32_crc32si(seed, item);
     }
 
     void clear() {
+        numElements = 0;
         std::memset(bits, 0, tableSize * sizeof(uint8_t));
     }
 };
@@ -384,7 +380,6 @@ private:
     uint32_t size = 0;
     float lower_bound = std::numeric_limits<float>::max();
     Bloom filter;
-    uint32_t filterSize = 0;
 public:
     KnnSet() {
         queue.resize(101);
@@ -407,12 +402,11 @@ public:
 //    }
 
     bool contains(uint32_t node) {
-        if (filter.mightContainSetOnFalse(node)) {
+        if (filter.mightContain(node)) {
             for (uint32_t i = 0; i < size; ++i) {
                 auto id = queue[i].second;
                 if (id == node) return true;
             }
-            return false;
         }
         return false;
     }
@@ -426,11 +420,13 @@ public:
         size++;
         std::push_heap(queue.begin(), queue.begin() + size);
 
-        if (filter.numElements == filter.maxElements) {
+        if (filter.numElements >= filter.maxElements) {
             filter.clear();
             for (uint32_t i = 0; i < size; ++i) {
                 filter.set(queue[i].second);
             }
+        } else {
+            filter.set(nodePair.second);
         }
     }
 
