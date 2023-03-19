@@ -20,7 +20,6 @@
 #include <smmintrin.h>
 #include <emmintrin.h>
 #include <immintrin.h>
-#include "thirdparty/perfevent/PerfEvent.hpp"
 
 using std::cout;
 using std::endl;
@@ -69,8 +68,6 @@ uint64_t maxGroupSize = 200;
 uint64_t groupingTime = 0;
 uint64_t processGroupsTime = 0;
 
-PerfEvent perf;
-uint32_t perfScale = 1'000'000;
 
 
 
@@ -377,6 +374,76 @@ struct Bloom {
     }
 };
 
+
+struct KnnSetScannable {
+private:
+    vector<pair<float, uint32_t>> queue;
+    uint32_t size = 0;
+    float lower_bound = std::numeric_limits<float>::max();
+public:
+    KnnSetScannable() {
+        queue.resize(100);
+    }
+
+    bool contains(uint32_t node) {
+        for (uint32_t i = 0; i < size; ++i) {
+            auto id = queue[i].second;
+            if (id == node) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void append(pair<float, uint32_t> nodePair) {
+        queue[size] = std::move(nodePair);
+        size++;
+    }
+
+    void addCandidate(const uint32_t candidate_id, float dist) {
+        if (size < 100 && !contains(candidate_id)) {
+            append({dist, candidate_id});
+            lower_bound = std::max(lower_bound, dist);
+        } else if (dist < lower_bound) {
+            float secondMaxVal = std::numeric_limits<float>::min();
+            float maxVal = std::numeric_limits<float>::min();
+            uint32_t maxIdx = -1;
+            for (uint32_t i = 0; i < size; ++i) {
+                auto& [otherDist, id] = queue[i];
+                if (id == candidate_id) {
+                    return;
+                }
+
+                if (otherDist > maxVal) {
+                    secondMaxVal = maxVal;
+                    maxVal = otherDist;
+                    maxIdx = i;
+                } else if (otherDist > secondMaxVal) {
+                    secondMaxVal = otherDist;
+                }
+            }
+
+//            if (maxIdx != size-1) {
+//                secondMaxVal = std::max(secondMaxVal, queue[size-1].first);
+//            }
+
+            queue[maxIdx] = {dist, candidate_id};
+            lower_bound = std::max(secondMaxVal, dist);
+        }
+    }
+
+    vector<uint32_t> finalize() {
+        std::sort(queue.begin(), queue.begin() + size);
+        vector<uint32_t> knn;
+        for (uint32_t i = 0; i < size; ++i) {
+            knn.push_back(queue[i].second);
+        }
+        return knn;
+    }
+};
+
+
+
 struct KnnSet {
 private:
     vector<pair<float, uint32_t>> queue;
@@ -465,7 +532,7 @@ public:
 void addCandidates(const vector<vector<float>> &points,
                    vector<uint32_t>& indices,
                    Range range,
-                   vector<KnnSet>& idToKnn) {
+                   vector<KnnSetScannable>& idToKnn) {
     for (uint32_t i=range.first; i < range.second-1; ++i) {
         for (uint32_t j=i+1; j < range.second; ++j) {
             auto id1 = indices[i];
@@ -931,7 +998,6 @@ void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vec
     }
 
     auto startHash = hclock::now();
-    perf.startCounters();
 
     // compute all hash function values
     vector<std::thread> threads;
@@ -946,19 +1012,14 @@ void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vec
                     float proj = dot(unitVec, vec);
                     hashSet.push_back(proj);
                 }
-//                std::cout << "hashes size: " << hashes[i].size() << std::endl;
             }
         });
     }
     for (auto& thread: threads) { thread.join(); }
 
-    perf.stopCounters();
-    std::cout << "group hash\n";
-    perf.printReport(std::cout, perfScale);
-    std::cout << "group hash time: " << duration_cast<milliseconds>(hclock::now() - startHash).count() << std::endl << std::endl;
+    std::cout << "group hash time: " << duration_cast<milliseconds>(hclock::now() - startHash).count() << std::endl;
 
     auto startRegroup = hclock::now();
-    perf.startCounters();
 
     vector<pair<uint32_t, Range>> stack;
     stack.emplace_back(0, make_pair(0, numPoints));
@@ -988,9 +1049,6 @@ void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vec
                         auto rangeEnd = indices.begin() + range.second;
 
                         auto middleIt = std::partition(rangeBegin, rangeEnd, [&](uint32_t id){
-                            //std::cout << "id: " << id << ", depth: " << depth;
-                            //std::cout << "hashes[id].size: " << hashes[id].size() << std::endl;
-
                             auto proj = hashes[id][depth];
                             return proj <= mid;
                         });
@@ -1013,9 +1071,6 @@ void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vec
     }
     for (auto& thread: threads) { thread.join(); }
 
-    perf.stopCounters();
-    std::cout << "group regoup\n";
-    perf.printReport(std::cout, perfScale);
     std::cout << "group regroup time: " << duration_cast<milliseconds>(hclock::now() - startRegroup).count() << std::endl;
 }
 
@@ -1140,13 +1195,13 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
     if(getenv("LOCAL_RUN")) {
         timeBoundsMs = 60'000;
     } else {
-        timeBoundsMs = points.size() == 10'000 ? 20'000 : 1'600'000;
+        timeBoundsMs = points.size() == 10'000 ? 30'000 : 1'600'000;
     }
 
     std::cout << "start run with time bound: " << timeBoundsMs << std::endl;
 
     auto startTime = hclock::now();
-    vector<KnnSet> idToKnn(points.size());
+    vector<KnnSetScannable> idToKnn(points.size());
     uint32_t numPoints = points.size();
 
     uint32_t iteration = 0;
@@ -1162,10 +1217,8 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
 
         auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
         groupingTime += groupDuration;
-        std::cout << endl;
 
 
-        perf.startCounters();
         auto startProcessing = hclock::now();
 
         auto numThreads = std::thread::hardware_concurrency();
@@ -1190,14 +1243,10 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
         auto processingDuration = duration_cast<milliseconds>(hclock::now() - startProcessing).count();
         processGroupsTime += processingDuration;
 
-        perf.stopCounters();
-        std::cout << "processing\n";
-        perf.printReport(std::cout, perfScale);
         std::cout << "processing time: " << processingDuration << std::endl;
         std::cout << "--------------------------------------------------------------------------------------------------------" << std::endl;
 
         iteration++;
-        perf.startCounters();
     }
 
     for (uint32_t id = 0; id < points.size(); ++id) {

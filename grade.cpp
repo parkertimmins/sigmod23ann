@@ -76,6 +76,13 @@ int main(int argc, char **argv) {
             }
         }
 //        std::cout << std::endl;
+//        if(numCorrect != 100) {
+//            std::cout << "i: " << i << std::endl;
+//            for (auto x : t) std::cout << x << ",";
+//            std::cout << std::endl;
+//            for (auto x : b) std::cout << x << ",";
+//            std::cout << std::endl;
+//        }
         corrects.push_back(numCorrect);
     }
 
