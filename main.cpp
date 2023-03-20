@@ -99,6 +99,32 @@ float distance(const Vec &lhs, const Vec &rhs) {
     return ans;
 }
 
+std::optional<float> distanceLessThan(const Vec &lhs, const Vec &rhs, float upperBound) {
+    __m128 sum  = _mm_set1_ps(0);
+    __m128 bound = _mm_set1_ps(upperBound / 4);
+
+    auto* r = const_cast<float*>(rhs.data());
+    auto* l = const_cast<float*>(lhs.data());
+    for (uint32_t i = 0; i < 100; i+=4) {
+        __m128 rs = _mm_load_ps(r);
+        __m128 ls = _mm_load_ps(l);
+        __m128 diff = _mm_sub_ps(ls, rs);
+        __m128 prod = _mm_mul_ps(diff, diff);
+        sum = _mm_add_ps(sum, prod);
+        if (_mm_test_all_ones(_mm_castps_si128(_mm_cmpgt_ps(sum, bound)))) {
+            return {};
+        }
+        l += 4;
+        r += 4;
+    }
+    float sums[4] = {};
+    _mm_store_ps(sums, sum);
+    float ans = 0.0f;
+    for (float s: sums) {
+        ans += s;
+    }
+    return ans;
+}
 
 float distance128(const Vec &lhs, const Vec &rhs) {
     __m128 sum  = _mm_set1_ps(0);
@@ -379,8 +405,8 @@ struct KnnSetScannable {
 private:
     vector<pair<float, uint32_t>> queue;
     uint32_t size = 0;
-    float lower_bound = std::numeric_limits<float>::max();
 public:
+    float lower_bound = std::numeric_limits<float>::max();
     KnnSetScannable() {
         queue.resize(100);
     }
@@ -559,46 +585,51 @@ public:
 
 
 
-void addCandidates1(const vector<vector<float>> &points,
+void addCandidates(const vector<vector<float>> &points,
                    vector<uint32_t>& indices,
                    Range range,
                    vector<KnnSetScannable>& idToKnn) {
     for (uint32_t i=range.first; i < range.second-1; ++i) {
         auto id1 = indices[i];
-        auto knn1 = idToKnn[id1];
+        auto& knn1 = idToKnn[id1];
         for (uint32_t j=i+1; j < range.second; ++j) {
+
             auto id2 = indices[j];
-            float dist = distance128(points[id1], points[id2]);
-            knn1.addCandidate(id2, dist);
-            idToKnn[id2].addCandidate(id1, dist);
+            auto& knn2 = idToKnn[id2];
+            auto bound = std::max(knn1.lower_bound, knn2.lower_bound);
+            auto dist = distanceLessThan(points[id1], points[id2], bound);
+            if (dist.has_value()) {
+                knn1.addCandidate(id2, *dist);
+                knn2.addCandidate(id1, *dist);
+            }
         }
     }
 }
 
-void addCandidates(const vector<vector<float>> &points,
+void addCandidates2(const vector<vector<float>> &points,
                    vector<uint32_t>& indices,
                    Range range,
                    vector<KnnSetScannable>& idToKnn,
-                   vector<vector<float>>& distances) {
+                   vector<vector<float>>& distCache) {
     auto rangeSize = range.second - range.first;
 
-    distances.resize(rangeSize);
-    for (auto& v: distances) {
+    distCache.resize(rangeSize);
+    for (auto& v: distCache) {
         v.resize(rangeSize);
     }
 
     for (uint32_t i=range.first, k=0; i < range.second-1; ++i, ++k) {
         for (uint32_t j=i+1, l=k+1; j < range.second; ++j, ++l) {
             float dist = distance128(points[indices[i]], points[indices[j]]);
-            distances[k][l] = dist;
-            distances[l][k] = dist;
+            distCache[k][l] = dist;
+            distCache[l][k] = dist;
         }
     }
 
     for (uint32_t i=range.first, k=0; i < range.second; ++i, ++k) {
         auto id1 = indices[i];
         auto& knn1 = idToKnn[id1];
-        auto& dists = distances[k];
+        auto& dists = distCache[k];
         for (uint32_t j=range.first, l=0; j < range.second; ++j, ++l) {
             if (k == l) continue;
             float dist = dists[l];
@@ -1257,7 +1288,7 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
 
     long timeBoundsMs;
     if(getenv("LOCAL_RUN")) {
-        timeBoundsMs = 60'000;
+        timeBoundsMs = 30'000;
     } else {
         timeBoundsMs = points.size() == 10'000 ? 20'000 : 1'600'000;
     }
@@ -1292,12 +1323,11 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
         for (uint32_t t = 0; t < numThreads; ++t) {
             threads.emplace_back([&]() {
                 auto optRange = tasks.getTask();
-                vector<vector<float>> distCache;
                 while (optRange) {
                     auto& range = *optRange;
                     uint32_t rangeSize = range.second - range.first;
                     count += rangeSize;
-                    addCandidates(points, indices, range, idToKnn, distCache);
+                    addCandidates(points, indices, range, idToKnn);
                     optRange= tasks.getTask();
                 }
             });
