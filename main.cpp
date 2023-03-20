@@ -70,7 +70,6 @@ uint64_t processGroupsTime = 0;
 
 
 
-
 template<class T, class TVec = vector<T>>
 struct Task {
     TVec& tasks;
@@ -149,7 +148,7 @@ float distance256(const Vec &lhs, const Vec &rhs) {
     return ans;
 }
 
-float norm(Vec& vec) {
+double norm(const Vec& vec) {
     float sumSquares = 0.0;
     for (auto& v : vec) {
         sumSquares += (v * v);
@@ -158,11 +157,21 @@ float norm(Vec& vec) {
 }
 
 void normalizeInPlace(Vec& vec) {
-    float vecNorm = norm(vec);
+    double vecNorm = norm(vec);
     for (float& v : vec) {
         v = v / vecNorm;
     }
 }
+
+Vec normalize(const Vec& vec) {
+    Vec res;
+    double vecNorm = norm(vec);
+    for (float v : vec) {
+        res.push_back(v / vecNorm);
+    }
+    return vec;
+}
+
 std::default_random_engine rd(123);
 vector<float> randUniformUnitVec(size_t dim=100) {
     std::mt19937 gen(rd());
@@ -181,6 +190,16 @@ vector<float> randUniformUnitVec(size_t dim=100) {
 }
 
 Vec sub(const Vec& lhs, const Vec& rhs) {
+    auto dim = lhs.size();
+    Vec result(dim);
+    for (uint32_t i = 0; i < dim; i++) {
+        result[i]  = lhs[i] - rhs[i];
+    }
+    return result;
+}
+
+
+Vec sub128(const Vec& lhs, const Vec& rhs) {
     auto dim = lhs.size();
     Vec result(dim);
     auto* r = const_cast<float*>(rhs.data());
@@ -213,7 +232,16 @@ void plusEq(Vec& lhs, const Vec& rhs) {
     }
 }
 
+
 Vec scalarMult(float c, const Vec& vec) {
+    Vec res;
+    for (float v : vec) {
+        res.push_back(c * v);
+    }
+    return res;
+}
+
+Vec scalarMult128(float c, const Vec& vec) {
     auto dim = 100;
     Vec result(dim);
     __m128 cs = _mm_set1_ps(c);
@@ -269,9 +297,10 @@ uint64_t projectRandoms(const vector<Vec>& randVecs, const Vec& values) {
     return projection; 
 }
 
-// onto unit vector
-Vec project(const Vec& randUnit, const Vec& vec) {
-    return scalarMult(dot(randUnit, vec), randUnit);
+
+// project v onto u
+Vec project(const Vec& u, const Vec& v) {
+    return scalarMult(dot(u, v), normalize(u));
 }
 
 uint64_t alpha = 10;
@@ -1055,6 +1084,21 @@ Vec pca1(vector<pair<float, uint32_t>>& group, const vector<Vec>& vecs) {
     return r;
 }
 
+// assume that argument unit vectors are linearly independent
+// also unit vectors
+vector<Vec> gramSchmidt(vector<Vec>& v) {
+    vector<Vec> u(v.size());
+    u[0] = normalize(v[0]);
+    for (uint32_t i = 1; i < v.size(); ++i) {
+        u[i] = v[i];
+        for (auto j = 0; j < i; ++j) {
+            u[i] = sub(u[i], project(u[j], v[i]));
+        }
+        u[i] = normalize(u[i]);
+    }
+    return u;
+}
+
 void rehash(vector<pair<float, uint32_t>>& group, const vector<Vec>& vecs) {
     auto u = randUniformUnitVec();
     for (auto& p : group) {
@@ -1183,6 +1227,15 @@ void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vec
     for (uint32_t h = 0; h < numHashFuncs; ++h) {
         unitVecs[h] = randUniformUnitVec();
     }
+    unitVecs = gramSchmidt(unitVecs);
+
+//    for (auto i = 0; i < unitVecs.size(); ++i) {
+//        std::cout << "vec " << i << " norm: " << norm(unitVecs[i]) << std::endl;
+//        std::cout << "unit vec" << i << " norm: " << norm(unitVecs[i]) << std::endl;
+//        for (auto j = 0; j < unitVecs.size(); ++j) {
+//            std::cout << "dot(" << i << ", " << j << ") = " << dot(unitVecs[i], unitVecs[j]) << std::endl;
+//        }
+//    }
 
     auto startHash = hclock::now();
 
