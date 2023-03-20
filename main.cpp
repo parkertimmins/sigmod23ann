@@ -578,31 +578,15 @@ void addCandidates1(const vector<vector<float>> &points,
 void addCandidates(const vector<vector<float>> &points,
                    vector<uint32_t>& indices,
                    Range range,
-                   vector<KnnSetScannable>& idToKnn,
-                   vector<vector<float>>& distances) {
-    auto rangeSize = range.second - range.first;
-
-    distances.resize(rangeSize);
-    for (auto& v: distances) {
-        v.resize(rangeSize);
-    }
-
-    for (uint32_t i=range.first, k=0; i < range.second-1; ++i, ++k) {
-        for (uint32_t j=i+1, l=k+1; j < range.second; ++j, ++l) {
-            float dist = distance128(points[indices[i]], points[indices[j]]);
-            distances[k][l] = dist;
-            distances[l][k] = dist;
-        }
-    }
-
-    for (uint32_t i=range.first, k=0; i < range.second; ++i, ++k) {
+                   vector<KnnSetScannable>& idToKnn) {
+    for (uint32_t i=range.first; i < range.second; ++i) {
         auto id1 = indices[i];
         auto& knn1 = idToKnn[id1];
-        auto& dists = distances[k];
-        for (uint32_t j=range.first, l=0; j < range.second; ++j, ++l) {
-            if (k == l) continue;
-            float dist = dists[l];
+        auto& pt1 = points[id1];
+        for (uint32_t j=range.first; j < range.second; ++j) {
+            if (i == j) continue;
             auto id2 = indices[j];
+            float dist = distance128(pt1, points[id2]);
             knn1.addCandidate(id2, dist);
         }
     }
@@ -1292,12 +1276,11 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
         for (uint32_t t = 0; t < numThreads; ++t) {
             threads.emplace_back([&]() {
                 auto optRange = tasks.getTask();
-                vector<vector<float>> distCache;
                 while (optRange) {
                     auto& range = *optRange;
                     uint32_t rangeSize = range.second - range.first;
                     count += rangeSize;
-                    addCandidates(points, indices, range, idToKnn, distCache);
+                    addCandidates(points, indices, range, idToKnn);
                     optRange= tasks.getTask();
                 }
             });
