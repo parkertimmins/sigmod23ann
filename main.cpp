@@ -488,15 +488,9 @@ public:
         size = out;
     }
 
-
-    void mergeCandidates(vector<pair<float, uint32_t>>& distPairCache) {
-        vector<pair<float, uint32_t>> outQueue(100);
+    void mergeCandidates(vector<pair<float, uint32_t>>& distPairCache, vector<pair<float, uint32_t>>& outQueue) {
         merge(distPairCache, queue, outQueue);
-
-        for (int i = 0; i < 100; ++i) {
-            queue[i] = outQueue[i];
-        }
-//        std::swap(queue, outQueue);
+        std::swap(queue, outQueue);
     }
 
 //    void addCandidate(const uint32_t candidate_id, float dist) {
@@ -716,24 +710,24 @@ void addCandidatesSortMerge(const vector<vector<float>> &points,
     }
 
     auto groupSize = range.second - range.first;
-    vector<pair<float, uint32_t>> distPairCache;
-    distPairCache.reserve(groupSize);
-    vector<pair<float, uint32_t>> queueScratch;
+    vector<pair<float, uint32_t>> distPairCache(groupSize-1);
+    vector<pair<float, uint32_t>> queueScratch(100);
 
     for (uint32_t i=range.first, k=0; i < range.second; ++i, ++k) {
         auto id1 = indices[i];
         auto& knn1 = idToKnn[id1];
         auto& pt1 = points[id1];
+
+        uint32_t ll = 0;
         for (uint32_t j=range.first, l=0; j < range.second; ++j, ++l) {
             if (k == l) continue;
             auto id2 = indices[j];
             float dist = distances[k][l];
-            distPairCache.emplace_back(dist, id2);
+            distPairCache[ll++] = {dist, id2};
         }
 
         std::sort(distPairCache.begin(), distPairCache.end());
-        knn1.mergeCandidates(distPairCache);
-        distPairCache.clear();
+        knn1.mergeCandidates(distPairCache, queueScratch);
     }
 }
 
