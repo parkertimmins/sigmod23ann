@@ -429,6 +429,70 @@ public:
         }
     }
 
+    void merge(vector<pair<float, uint32_t>>& left,
+               vector<pair<float, uint32_t>>& right,
+               vector<pair<float, uint32_t>>& output) {
+
+        // l and r point to next items to insert
+        uint32_t l = 0;
+        uint32_t r = 0;
+
+        // out points to next insert point
+        uint32_t out = 0;
+
+
+        if (!left.empty() && !right.empty()) {
+            if (left[l] <= right[r]) {
+                output[out++] = left[l++];
+            } else {
+                output[out++] = right[r++];
+            }
+        } else if (!left.empty()) {
+            output[out++] = left[l++];
+        } else if (!right.empty()) {
+            output[out++] = right[r++];
+        } else {
+            return;
+        }
+
+        while (out < 100 && (l < left.size() || r < right.size())) {
+            if (l < left.size() && r < right.size()) {
+                if (left[l] == output[out - 1]) {
+                    l++;
+                } else if (right[r] == output[out - 1]) {
+                    r++;
+                } else if (left[l] <= right[r]) {
+                    output[out++] = left[l++];
+                } else {
+                    output[out++] = right[r++];
+                }
+            } else if (l < left.size()) {
+                while (out < 100 && l < left.size())  {
+                    if (left[l] == output[out - 1]) {
+                        l++;
+                    } else {
+                        output[out++] = left[l++];
+                    }
+                }
+            } else {
+                while (out < 100 && r < right.size())  {
+                    if (right[r] == output[out - 1]) {
+                        r++;
+                    } else {
+                        output[out++] = left[r++];
+                    }
+                }
+            }
+        }
+    }
+
+
+    void mergeCandidates(vector<pair<float, uint32_t>>& distPairCache,
+                         vector<pair<float, uint32_t>>& outQueue) {
+        merge(distPairCache, queue, outQueue);
+        std::swap(queue, outQueue);
+    }
+
 //    void addCandidate(const uint32_t candidate_id, float dist) {
 //        if (size < 100 && !contains(candidate_id)) {
 //            append({dist, candidate_id});
@@ -575,10 +639,11 @@ void addCandidates1(const vector<vector<float>> &points,
     }
 }
 
-void addCandidates(const vector<vector<float>> &points,
-                   vector<uint32_t>& indices,
-                   Range range,
-                   vector<KnnSetScannable>& idToKnn) {
+
+void addCandidatesComputeDist(const vector<vector<float>> &points,
+                             vector<uint32_t>& indices,
+                             Range range,
+                             vector<KnnSetScannable>& idToKnn) {
     for (uint32_t i=range.first; i < range.second; ++i) {
         auto id1 = indices[i];
         auto& knn1 = idToKnn[id1];
@@ -589,6 +654,78 @@ void addCandidates(const vector<vector<float>> &points,
             float dist = distance128(pt1, points[id2]);
             knn1.addCandidate(id2, dist);
         }
+    }
+}
+
+
+void addCandidatesStoreDist(const vector<vector<float>> &points,
+                   vector<uint32_t>& indices,
+                   Range range,
+                   vector<KnnSetScannable>& idToKnn,
+                   vector<vector<float>>& distances) {
+    auto rangeSize = range.second - range.first;
+
+    distances.resize(rangeSize);
+    for (auto& v: distances) {
+        v.resize(rangeSize);
+    }
+
+    for (uint32_t i=range.first, k=0; i < range.second-1; ++i, ++k) {
+        for (uint32_t j=i+1, l=k+1; j < range.second; ++j, ++l) {
+            float dist = distance128(points[indices[i]], points[indices[j]]);
+            distances[k][l] = dist;
+            distances[l][k] = dist;
+        }
+    }
+
+    for (uint32_t i=range.first, k=0; i < range.second; ++i, ++k) {
+        auto id1 = indices[i];
+        auto& knn1 = idToKnn[id1];
+        auto& dists = distances[k];
+        for (uint32_t j=range.first, l=0; j < range.second; ++j, ++l) {
+            if (k == l) continue;
+            float dist = dists[l];
+            auto id2 = indices[j];
+            knn1.addCandidate(id2, dist);
+        }
+    }
+}
+
+void addCandidatesSortMerge(const vector<vector<float>> &points,
+                            vector<uint32_t>& indices,
+                            Range range,
+                            vector<KnnSetScannable>& idToKnn) {
+
+    auto rangeSize = range.second - range.first;
+    vector<vector<float>> distances(rangeSize);
+    for (auto& v: distances) {
+        v.resize(rangeSize);
+    }
+    for (uint32_t i=range.first, k=0; i < range.second-1; ++i, ++k) {
+        for (uint32_t j=i+1, l=k+1; j < range.second; ++j, ++l) {
+            float dist = distance128(points[indices[i]], points[indices[j]]);
+            distances[k][l] = dist;
+            distances[l][k] = dist;
+        }
+    }
+
+    auto groupSize = range.second - range.first;
+    vector<pair<float, uint32_t>> distPairCache(groupSize);
+    vector<pair<float, uint32_t>> queueScratch(100);
+
+    for (uint32_t i=range.first, k=0; i < range.second; ++i, ++k) {
+        auto id1 = indices[i];
+        auto& knn1 = idToKnn[id1];
+        auto& pt1 = points[id1];
+        for (uint32_t j=range.first, l=0; j < range.second; ++j, ++l) {
+            if (i == j) continue;
+            auto id2 = indices[j];
+            float dist = distances[k][l];
+            distPairCache.emplace_back(dist, id2);
+        }
+        std::sort(distPairCache.begin(), distPairCache.end());
+        knn1.mergeCandidates(distPairCache, queueScratch);
+        distPairCache.clear();
     }
 }
 
@@ -1280,7 +1417,7 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
                     auto& range = *optRange;
                     uint32_t rangeSize = range.second - range.first;
                     count += rangeSize;
-                    addCandidates(points, indices, range, idToKnn);
+                    addCandidatesSortMerge(points, indices, range, idToKnn);
                     optRange= tasks.getTask();
                 }
             });
