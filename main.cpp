@@ -629,7 +629,7 @@ void addCandidates(const vector<vector<float>> &points,
                    vector<KnnSetScannable>& idToKnn) {
     for (uint32_t i=range.first; i < range.second-1; ++i) {
         auto id1 = indices[i];
-        auto knn1 = idToKnn[id1];
+        auto& knn1 = idToKnn[id1];
         for (uint32_t j=i+1; j < range.second; ++j) {
             auto id2 = indices[j];
             float dist = distance128(points[id1], points[id2]);
@@ -1419,7 +1419,7 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
                     auto& range = *optRange;
                     uint32_t rangeSize = range.second - range.first;
                     count += rangeSize;
-                    addCandidatesSortMerge(points, indices, range, idToKnn);
+                    addCandidates(points, indices, range, idToKnn);
                     optRange= tasks.getTask();
                 }
             });
