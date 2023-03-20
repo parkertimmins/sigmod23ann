@@ -1449,7 +1449,7 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
         std::cout << "Iteration: " << iteration << std::endl;
         auto startGroup = hclock::now();
 
-        uint32_t numHashFuncs = requiredHashFuncs(points.size(), 300);
+        uint32_t numHashFuncs = requiredHashFuncs(points.size(), 500);
         std::vector<uint32_t> indices(numPoints);
         std::iota(indices.begin(), indices.end(), 0);
         vector<Range> ranges;
