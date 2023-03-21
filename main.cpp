@@ -743,7 +743,7 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
         std::cout << "processing time: " << processingDuration << std::endl;
 
         auto startGroup = hclock::now();
-        uint32_t numHashFuncs = requiredHashFuncs(numPoints, 300);
+        uint32_t numHashFuncs = requiredHashFuncs(numPoints, 100);
         ranges.clear();
         std::iota(indices.begin(), indices.end(), 0);
         splitHorizontalThreadArray(200, numHashFuncs, numPoints, points, ranges, indices);
