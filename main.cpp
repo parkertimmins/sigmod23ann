@@ -18,6 +18,7 @@
 #include "io.h"
 #include <emmintrin.h>
 #include <immintrin.h>
+#include <boost/align/aligned_alloc.hpp>
 
 using std::cout;
 using std::endl;
@@ -58,10 +59,11 @@ using Range = pair<uint32_t, uint32_t>;
  */
 
 
-uint64_t maxGroupSize = 200;
 uint64_t groupingTime = 0;
 uint64_t processGroupsTime = 0;
 std::default_random_engine rd(123);
+const uint32_t dims = 100;
+const uint32_t k = 100;
 
 
 template<class T, class TVec = vector<T>>
@@ -82,10 +84,35 @@ struct Task {
     }
 };
 
-float distance256(const Vec &lhs, const Vec &rhs) {
+
+float distance128(const float* lhs, const float* rhs) {
+    __m128 sum  = _mm_set1_ps(0);
+    auto* r = rhs;
+    auto* l = lhs;
+    for (uint32_t i = 0; i < dims; i+=4) {
+        __m128 rs = _mm_load_ps(r);
+        __m128 ls = _mm_load_ps(l);
+        __m128 diff = _mm_sub_ps(ls, rs);
+        __m128 prod = _mm_mul_ps(diff, diff);
+        sum = _mm_add_ps(sum, prod);
+        l += 4;
+        r += 4;
+    }
+
+    float sums[4] = {};
+    _mm_store_ps(sums, sum);
+    float ans = 0.0f;
+    for (float s: sums) {
+        ans += s;
+    }
+    return ans;
+}
+
+
+float distance(const float* lhs, const float* rhs) {
     __m256 sum  = _mm256_set1_ps(0);
-    auto* r = const_cast<float*>(rhs.data());
-    auto* l = const_cast<float*>(lhs.data());
+    auto* r = rhs;
+    auto* l = lhs;
     for (uint32_t i = 0; i < 96; i+=8) {
         __m256 rs = _mm256_load_ps(r);
         __m256 ls = _mm256_load_ps(l);
@@ -100,7 +127,7 @@ float distance256(const Vec &lhs, const Vec &rhs) {
     for (float s: sums) {
         ans += s;
     }
-    for (unsigned i = 96; i < 100; ++i) {
+    for (unsigned i = 96; i < dims; ++i) {
         auto d = (lhs[i] - rhs[i]);
         ans += (d * d);
     }
@@ -131,7 +158,7 @@ Vec normalize(const Vec& vec) {
     return vec;
 }
 
-Vec randUniformUnitVec(size_t dim=100) {
+Vec randUniformUnitVec(size_t dim=dims) {
     std::mt19937 gen(rd());
     std::normal_distribution<> normalDist(0, 1);
 
@@ -165,10 +192,34 @@ Vec scalarMult(float c, const Vec& vec) {
 }
 
 
-float dot256(const Vec &lhs, const Vec &rhs) {
+
+float dot128(const float* lhs, const float* rhs) {
+    __m128 sum  = _mm_set1_ps(0);
+    auto* r = rhs;
+    auto* l = lhs;
+    for (uint32_t i = 0; i < dims; i+=4) {
+        __m128 rs = _mm_load_ps(r);
+        __m128 ls = _mm_load_ps(l);
+        __m128 prod = _mm_mul_ps(rs, ls);
+        sum = _mm_add_ps(sum, prod);
+        l += 4;
+        r += 4;
+    }
+    float sums[4] = {};
+    _mm_store_ps(sums, sum);
+    float ans = 0.0f;
+    for (float s: sums) {
+        ans += s;
+    }
+    return ans;
+}
+
+
+
+float dot(const float* lhs, const float* rhs) {
     __m256 sum  = _mm256_set1_ps(0);
-    auto* r = const_cast<float*>(rhs.data());
-    auto* l = const_cast<float*>(lhs.data());
+    auto* r = rhs;
+    auto* l = lhs;
     for (uint32_t i = 0; i < 96; i+=8) {
         __m256 rs = _mm256_load_ps(r);
         __m256 ls = _mm256_load_ps(l);
@@ -182,7 +233,7 @@ float dot256(const Vec &lhs, const Vec &rhs) {
     for (float s: sums) {
         ans += s;
     }
-    for (unsigned i = 96; i < 100; ++i) {
+    for (unsigned i = 96; i < dims; ++i) {
         ans += (lhs[i] * rhs[i]);
     }
     return ans;
@@ -191,7 +242,7 @@ float dot256(const Vec &lhs, const Vec &rhs) {
 
 // project v onto u
 Vec project(const Vec& u, const Vec& v) {
-    return scalarMult(dot256(u, v), normalize(u));
+    return scalarMult(dot(u.data(), v.data()), normalize(u));
 }
 
 
@@ -202,7 +253,7 @@ private:
     float lower_bound = std::numeric_limits<float>::max();
 public:
     KnnSetScannable() {
-        queue.resize(100);
+        queue.resize(k);
     }
 
     bool contains(uint32_t node) {
@@ -222,7 +273,7 @@ public:
 
     // This may misorder nodes of equal sizes
     void addCandidate(const uint32_t candidate_id, float dist) {
-        if (size < 100 && !contains(candidate_id)) {
+        if (size < k && !contains(candidate_id)) {
             append({dist, candidate_id});
             lower_bound = std::max(lower_bound, dist);
         } else if (dist < lower_bound) {
@@ -276,7 +327,7 @@ public:
             return;
         }
 
-        while (out < 100 && (l < left.size() || r < rightSize)) {
+        while (out < k && (l < left.size() || r < rightSize)) {
             if (l < left.size() && r < rightSize) {
                 if (left[l] == output[out - 1]) {
                     l++;
@@ -288,7 +339,7 @@ public:
                     output[out++] = right[r++];
                 }
             } else if (l < left.size()) {
-                while (out < 100 && l < left.size())  {
+                while (out < k && l < left.size())  {
                     if (left[l] == output[out - 1]) {
                         l++;
                     } else {
@@ -296,7 +347,7 @@ public:
                     }
                 }
             } else {
-                while (out < 100 && r < rightSize)  {
+                while (out < k && r < rightSize)  {
                     if (right[r] == output[out - 1]) {
                         r++;
                     } else {
@@ -324,7 +375,7 @@ public:
 };
 
 
-void addCandidates(const vector<Vec> &points,
+void addCandidates(float points[][104],
                    vector<uint32_t>& indices,
                    Range range,
                    vector<KnnSetScannable>& idToKnn) {
@@ -333,19 +384,19 @@ void addCandidates(const vector<Vec> &points,
         auto& knn1 = idToKnn[id1];
         for (uint32_t j=i+1; j < range.second; ++j) {
             auto id2 = indices[j];
-            float dist = distance256(points[id1], points[id2]);
+            float dist = distance(points[id1], points[id2]);
             knn1.addCandidate(id2, dist);
             idToKnn[id2].addCandidate(id1, dist);
         }
     }
 }
 
-vector<uint32_t> padResult(const vector<Vec>& points, vector<vector<uint32_t>>& result) {
+vector<uint32_t> padResult(uint32_t numPoints, vector<vector<uint32_t>>& result) {
     auto unusedId = 1;
     vector<uint32_t> sizes(101);
-    for (uint32_t i=0; i < points.size(); ++i) {
+    for (uint32_t i=0; i < numPoints; ++i) {
         sizes[result[i].size()]++;
-        while (result[i].size() < 100)  {
+        while (result[i].size() < dims)  {
             result[i].push_back(unusedId);
         }
     }
@@ -442,7 +493,94 @@ float getSplitPoint(vector<vector<float>>& hashes, std::vector<uint32_t>& indice
 }
 
 
-void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vector<Range>& ranges, vector<uint32_t>& indices) {
+void splitHorizontalThreadArray(uint32_t maxGroupSize, uint32_t numHashFuncs, uint32_t numPoints, float points[][104], vector<Range>& ranges, vector<uint32_t>& indices) {
+    auto numThreads = std::thread::hardware_concurrency();
+    auto hashRanges = splitRange({0, numPoints}, numThreads);
+    vector<vector<float>> hashes(numPoints);
+
+    vector<Vec> unitVecs(numHashFuncs);
+    for (uint32_t h = 0; h < numHashFuncs; ++h) {
+        unitVecs[h] = randUniformUnitVec();
+    }
+    unitVecs = gramSchmidt(unitVecs);
+
+    auto startHash = hclock::now();
+
+    // compute all hash function values
+    vector<std::thread> threads;
+    for (uint32_t t = 0; t < numThreads; ++t) {
+        threads.emplace_back([&, t]() {
+            auto range = hashRanges[t];
+            for (uint32_t i = range.first; i < range.second; ++i) {
+                const float* p = points[i];
+                vector<float>& hashSet = hashes[i];
+                for (uint32_t h = 0; h < numHashFuncs; ++h) {
+                    const auto& unitVec = unitVecs[h];
+                    float proj = dot(unitVec.data(), p);
+                    hashSet.push_back(proj);
+                }
+            }
+        });
+    }
+    for (auto& thread: threads) { thread.join(); }
+
+    std::cout << "group hash time: " << duration_cast<milliseconds>(hclock::now() - startHash).count() << std::endl;
+
+    auto startRegroup = hclock::now();
+
+    vector<pair<uint32_t, Range>> stack;
+    stack.emplace_back(0, make_pair(0, numPoints));
+    std::mutex stack_mtx;
+    std::mutex groups_mtx;
+
+    threads.clear();
+    std::atomic<uint32_t> count = 0;
+    for (uint32_t t = 0; t < numThreads; ++t) {
+        threads.emplace_back([&]() {
+            while (count < numPoints) {
+                stack_mtx.lock();
+                if (!stack.empty()) {
+                    auto [depth, range] = stack.back(); stack.pop_back();
+                    stack_mtx.unlock();
+                    uint32_t rangeSize = range.second - range.first;
+
+                    if (rangeSize < maxGroupSize || depth == numHashFuncs) {
+                        count += rangeSize;
+                        std::lock_guard<std::mutex> guard(groups_mtx);
+                        ranges.push_back(range);
+                    } else {
+                        auto [min, max] = getBounds(hashes, indices, range, depth);
+                        auto mid = (min + max) / 2;
+                        auto rangeBegin = indices.begin() + range.first;
+                        auto rangeEnd = indices.begin() + range.second;
+                        auto middleIt = std::partition(rangeBegin, rangeEnd, [&](uint32_t id) {
+                            auto proj = hashes[id][depth];
+                            return proj <= mid;
+                        });
+                        auto range1Size = middleIt - rangeBegin;
+                        Range lo = {range.first, range.first + range1Size};
+                        Range hi = {range.first + range1Size , range.second};
+                        {
+                            std::lock_guard<std::mutex> guard(stack_mtx);
+                            stack.emplace_back(depth+1, lo);
+                            stack.emplace_back(depth+1, hi);
+                        }
+                    }
+                } else {
+                    stack_mtx.unlock();
+                }
+            }
+
+        });
+    }
+    for (auto& thread: threads) { thread.join(); }
+
+    std::cout << "group regroup time: " << duration_cast<milliseconds>(hclock::now() - startRegroup).count() << std::endl;
+}
+
+
+
+void splitHorizontalThreadVector(uint32_t maxGroupSize, uint32_t numHashFuncs, const vector<Vec>& points, vector<Range>& ranges, vector<uint32_t>& indices) {
     auto numPoints = points.size();
     auto numThreads = std::thread::hardware_concurrency();
     auto hashRanges = splitRange({0, numPoints}, numThreads);
@@ -462,11 +600,11 @@ void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vec
         threads.emplace_back([&, t]() {
             auto range = hashRanges[t];
             for (uint32_t i = range.first; i < range.second; ++i) {
-                const Vec& vec = points[i];
+                Vec p = points[i];
                 vector<float>& hashSet = hashes[i];
                 for (uint32_t h = 0; h < numHashFuncs; ++h) {
                     const auto& unitVec = unitVecs[h];
-                    float proj = dot256(unitVec, vec);
+                    float proj = dot(unitVec.data(), p.data());
                     hashSet.push_back(proj);
                 }
             }
@@ -511,8 +649,8 @@ void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vec
                         Range hi = {range.first + range1Size , range.second};
                         {
                             std::lock_guard<std::mutex> guard(stack_mtx);
-                            stack.emplace_back( depth+1, lo);
-                            stack.emplace_back( depth+1, hi);
+                            stack.emplace_back(depth+1, lo);
+                            stack.emplace_back(depth+1, hi);
                         }
                     }
                 } else {
@@ -527,31 +665,44 @@ void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vec
     std::cout << "group regroup time: " << duration_cast<milliseconds>(hclock::now() - startRegroup).count() << std::endl;
 }
 
-void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>>& result) {
+void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>& result) {
 
     long timeBoundsMs;
     if(getenv("LOCAL_RUN")) {
         timeBoundsMs = 60'000;
     } else {
-        timeBoundsMs = points.size() == 10'000 ? 20'000 : 1'600'000;
+        timeBoundsMs = pointsRead.size() == 10'000 ? 20'000 : 1'600'000;
     }
 
     std::cout << "start run with time bound: " << timeBoundsMs << std::endl;
 
     auto startTime = hclock::now();
-    vector<KnnSetScannable> idToKnn(points.size());
-    uint32_t numPoints = points.size();
+    vector<KnnSetScannable> idToKnn(pointsRead.size());
+    uint32_t numPoints = pointsRead.size();
+
+    // put into adjacent (hopefully) memory locations
+    std::vector<uint32_t> newToOldIndices(numPoints);
+    std::iota(newToOldIndices.begin(), newToOldIndices.end(), 0);
+    vector<Range> ranges;
+    splitHorizontalThreadVector(200, requiredHashFuncs(pointsRead.size(), 200), pointsRead, ranges, newToOldIndices);
+//    float (*points)[100] = static_cast<float(*)[100]>(boost::alignment::aligned_alloc(sizeof(__m256), numPoints * 100 * sizeof(float)));
+    float (*points)[104] = reinterpret_cast<float(*)[104]>(new __m256[(numPoints * 104 * sizeof(float)) / sizeof(__m256)]);
+    for (uint32_t newIdx = 0; newIdx < numPoints; ++newIdx) {
+        auto oldIdx = newToOldIndices[newIdx];
+        memcpy(points[newIdx], pointsRead[oldIdx].data(), sizeof(float) * dims);
+    }
+    pointsRead.clear();
 
     uint32_t iteration = 0;
     while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
         std::cout << "Iteration: " << iteration << std::endl;
         auto startGroup = hclock::now();
 
-        uint32_t numHashFuncs = requiredHashFuncs(points.size(), 300);
+        uint32_t numHashFuncs = requiredHashFuncs(numPoints, 300);
         std::vector<uint32_t> indices(numPoints);
         std::iota(indices.begin(), indices.end(), 0);
         vector<Range> ranges;
-        splitHorizontalThread(numHashFuncs, points, ranges, indices);
+        splitHorizontalThreadArray(200, numHashFuncs, numPoints, points, ranges, indices);
 
         auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
         groupingTime += groupDuration;
@@ -587,11 +738,19 @@ void constructResultSplitting(const vector<Vec>& points, vector<vector<uint32_t>
         iteration++;
     }
 
-    for (uint32_t id = 0; id < points.size(); ++id) {
-        result[id] = idToKnn[id].finalize();
+    for (uint32_t id = 0; id < numPoints; ++id) {
+        auto newIdxResultRow = idToKnn[id].finalize();
+        for (auto& ni : newIdxResultRow) {
+            ni = newToOldIndices[ni];
+        }
+        result[newToOldIndices[id]] = std::move(newIdxResultRow);
     }
 
-    auto sizes = padResult(points, result);
+//    for (uint32_t id = 0; id < points.size(); ++id) {
+//        result[id] = idToKnn[id].finalize();
+//    }
+
+    auto sizes = padResult(numPoints, result);
     for (uint32_t i=0; i < sizes.size(); ++i) {
         std::cout << "size: " << i << ", count: " << sizes[i] << std::endl;
     }

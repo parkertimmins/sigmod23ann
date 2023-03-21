@@ -50,30 +50,6 @@ float distance(const Vec &lhs, const Vec &rhs) {
 }
 
 
-float distance128(const Vec &lhs, const Vec &rhs) {
-    __m128 sum  = _mm_set1_ps(0);
-
-    auto* r = const_cast<float*>(rhs.data());
-    auto* l = const_cast<float*>(lhs.data());
-    for (uint32_t i = 0; i < 100; i+=4) {
-        __m128 rs = _mm_load_ps(r);
-        __m128 ls = _mm_load_ps(l);
-        __m128 diff = _mm_sub_ps(ls, rs);
-        __m128 prod = _mm_mul_ps(diff, diff);
-        sum = _mm_add_ps(sum, prod);
-        l += 4;
-        r += 4;
-    }
-
-    float sums[4] = {};
-    _mm_store_ps(sums, sum);
-    float ans = 0.0f;
-    for (float s: sums) {
-        ans += s;
-    }
-    return ans;
-}
-
 Vec scalarMult128(float c, const Vec& vec) {
     uint32_t dim = 100;
     Vec result(dim);
@@ -903,28 +879,6 @@ void splitRecursiveSingleThreaded(const vector<Vec>& points,vector<pair<float, u
     }
 }
 
-
-
-float dot(const Vec &lhs, const Vec &rhs) {
-    __m128 sum  = _mm_set1_ps(0);
-    auto* r = const_cast<float*>(rhs.data());
-    auto* l = const_cast<float*>(lhs.data());
-    for (uint32_t i = 0; i < 100; i+=4) {
-        __m128 rs = _mm_load_ps(r);
-        __m128 ls = _mm_load_ps(l);
-        __m128 prod = _mm_mul_ps(rs, ls);
-        sum = _mm_add_ps(sum, prod);
-        l += 4;
-        r += 4;
-    }
-    float sums[4] = {};
-    _mm_store_ps(sums, sum);
-    float ans = 0.0f;
-    for (float s: sums) {
-        ans += s;
-    }
-    return ans;
-}
 
 
 
