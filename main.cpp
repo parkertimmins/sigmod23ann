@@ -248,10 +248,13 @@ Vec project(const Vec& u, const Vec& v) {
 
 struct KnnSetScannable {
 private:
-    pair<float, uint32_t> queue[k];
+    vector<pair<float, uint32_t>> queue;
     uint32_t size = 0;
     float lower_bound = std::numeric_limits<float>::max();
 public:
+    KnnSetScannable() {
+        queue.resize(k);
+    }
 
     bool contains(uint32_t node) {
         for (uint32_t i = 0; i < size; ++i) {
@@ -297,75 +300,75 @@ public:
         }
     }
 
-//    void merge(vector<pair<float, uint32_t>>& left,
-//               vector<pair<float, uint32_t>>& right,
-//               vector<pair<float, uint32_t>>& output) {
-//
-//        // l and r point to next items to insert
-//        uint32_t l = 0;
-//        uint32_t r = 0;
-//
-//        // out points to next insert point
-//        uint32_t out = 0;
-//
-//        auto rightSize = size;
-//        if (!left.empty() && rightSize > 0) {
-//            if (left[l] <= right[r]) {
-//                output[out++] = left[l++];
-//            } else {
-//                output[out++] = right[r++];
-//            }
-//        } else if (!left.empty()) {
-//            output[out++] = left[l++];
-//        } else if (rightSize > 0) {
-//            output[out++] = right[r++];
-//        } else {
-//            size = out;
-//            return;
-//        }
-//
-//        while (out < k && (l < left.size() || r < rightSize)) {
-//            if (l < left.size() && r < rightSize) {
-//                if (left[l] == output[out - 1]) {
-//                    l++;
-//                } else if (right[r] == output[out - 1]) {
-//                    r++;
-//                } else if (left[l] <= right[r]) {
-//                    output[out++] = left[l++];
-//                } else {
-//                    output[out++] = right[r++];
-//                }
-//            } else if (l < left.size()) {
-//                while (out < k && l < left.size())  {
-//                    if (left[l] == output[out - 1]) {
-//                        l++;
-//                    } else {
-//                        output[out++] = left[l++];
-//                    }
-//                }
-//            } else {
-//                while (out < k && r < rightSize)  {
-//                    if (right[r] == output[out - 1]) {
-//                        r++;
-//                    } else {
-//                        output[out++] = right[r++];
-//                    }
-//                }
-//            }
-//        }
-//        size = out;
-//    }
-//
-//    void mergeCandidates(vector<pair<float, uint32_t>>& distPairCache, vector<pair<float, uint32_t>>& outQueue) {
-//        merge(distPairCache, queue, outQueue);
-//        std::swap(queue, outQueue);
-//    }
+    void merge(vector<pair<float, uint32_t>>& left,
+               vector<pair<float, uint32_t>>& right,
+               vector<pair<float, uint32_t>>& output) {
 
-    vector<uint32_t> finalize(std::vector<uint32_t>& newToOldIndices) {
-        std::sort(queue, queue + size);
+        // l and r point to next items to insert
+        uint32_t l = 0;
+        uint32_t r = 0;
+
+        // out points to next insert point
+        uint32_t out = 0;
+
+        auto rightSize = size;
+        if (!left.empty() && rightSize > 0) {
+            if (left[l] <= right[r]) {
+                output[out++] = left[l++];
+            } else {
+                output[out++] = right[r++];
+            }
+        } else if (!left.empty()) {
+            output[out++] = left[l++];
+        } else if (rightSize > 0) {
+            output[out++] = right[r++];
+        } else {
+            size = out;
+            return;
+        }
+
+        while (out < k && (l < left.size() || r < rightSize)) {
+            if (l < left.size() && r < rightSize) {
+                if (left[l] == output[out - 1]) {
+                    l++;
+                } else if (right[r] == output[out - 1]) {
+                    r++;
+                } else if (left[l] <= right[r]) {
+                    output[out++] = left[l++];
+                } else {
+                    output[out++] = right[r++];
+                }
+            } else if (l < left.size()) {
+                while (out < k && l < left.size())  {
+                    if (left[l] == output[out - 1]) {
+                        l++;
+                    } else {
+                        output[out++] = left[l++];
+                    }
+                }
+            } else {
+                while (out < k && r < rightSize)  {
+                    if (right[r] == output[out - 1]) {
+                        r++;
+                    } else {
+                        output[out++] = right[r++];
+                    }
+                }
+            }
+        }
+        size = out;
+    }
+
+    void mergeCandidates(vector<pair<float, uint32_t>>& distPairCache, vector<pair<float, uint32_t>>& outQueue) {
+        merge(distPairCache, queue, outQueue);
+        std::swap(queue, outQueue);
+    }
+
+    vector<uint32_t> finalize() {
+        std::sort(queue.begin(), queue.begin() + size);
         vector<uint32_t> knn;
         for (uint32_t i = 0; i < size; ++i) {
-            knn.push_back(newToOldIndices[queue[i].second]);
+            knn.push_back(queue[i].second);
         }
         return knn;
     }
@@ -375,7 +378,7 @@ public:
 void addCandidates(float points[][104],
                    vector<uint32_t>& indices,
                    Range range,
-                   KnnSetScannable idToKnn[]) {
+                   vector<KnnSetScannable>& idToKnn) {
     for (uint32_t i=range.first; i < range.second-1; ++i) {
         auto id1 = indices[i];
         auto& knn1 = idToKnn[id1];
@@ -699,7 +702,7 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
     std::cout << "start run with time bound: " << timeBoundsMs << std::endl;
 
     auto startTime = hclock::now();
-
+    vector<KnnSetScannable> idToKnn(pointsRead.size());
     uint32_t numPoints = pointsRead.size();
     auto numThreads = std::thread::hardware_concurrency();
 
@@ -709,8 +712,6 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
     float (*points)[104] = reinterpret_cast<float(*)[104]>(new __m256[(numPoints * 104 * sizeof(float)) / sizeof(__m256)]);
     splitSortForAdjacency(pointsRead, newToOldIndices, points, numThreads, numPoints, ranges);
     std::vector<uint32_t> indices = newToOldIndices;
-
-    auto* idToKnn = new KnnSetScannable[numPoints];
 
     uint32_t iteration = 0;
     while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
@@ -753,9 +754,17 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
         iteration++;
     }
 
-    for (uint32_t newId = 0; newId < numPoints; ++newId) {
-        result[newToOldIndices[newId]] = idToKnn[newId].finalize(newToOldIndices);
+    for (uint32_t id = 0; id < numPoints; ++id) {
+        auto newIdxResultRow = idToKnn[id].finalize();
+        for (auto& ni : newIdxResultRow) {
+            ni = newToOldIndices[ni];
+        }
+        result[newToOldIndices[id]] = std::move(newIdxResultRow);
     }
+
+//    for (uint32_t id = 0; id < points.size(); ++id) {
+//        result[id] = idToKnn[id].finalize();
+//    }
 
     auto sizes = padResult(numPoints, result);
     for (uint32_t i=0; i < sizes.size(); ++i) {
