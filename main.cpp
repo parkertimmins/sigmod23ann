@@ -89,8 +89,7 @@ float distance256(const Vec &lhs, const Vec &rhs) {
         __m256 rs = _mm256_load_ps(r);
         __m256 ls = _mm256_load_ps(l);
         __m256 diff = _mm256_sub_ps(ls, rs);
-        __m256 prod = _mm256_mul_ps(diff, diff);
-        sum = _mm256_add_ps(sum, prod);
+        sum = _mm256_fmadd_ps(diff, diff, sum);
         r += 8;
         l += 8;
     }
@@ -184,9 +183,6 @@ Vec sub(const Vec& lhs, const Vec& rhs) {
     return result;
 }
 
-
-
-
 Vec scalarMult(float c, const Vec& vec) {
     Vec res;
     for (float v : vec) {
@@ -203,8 +199,7 @@ float dot256(const Vec &lhs, const Vec &rhs) {
     for (uint32_t i = 0; i < 96; i+=8) {
         __m256 rs = _mm256_load_ps(r);
         __m256 ls = _mm256_load_ps(l);
-        __m256 prod = _mm256_mul_ps(rs, ls);
-        sum = _mm256_add_ps(sum, prod);
+        sum = _mm256_fmadd_ps(rs, ls, sum);
         l += 8;
         r += 8;
     }
@@ -215,8 +210,7 @@ float dot256(const Vec &lhs, const Vec &rhs) {
         ans += s;
     }
     for (unsigned i = 96; i < 100; ++i) {
-        auto d = (lhs[i] - rhs[i]);
-        ans += (d * d);
+        ans += (lhs[i] * rhs[i]);
     }
     return ans;
 }
@@ -409,38 +403,6 @@ vector<Vec> gramSchmidt(vector<Vec>& v) {
         u[i] = normalize(u[i]);
     }
     return u;
-}
-
-void rehash(vector<pair<float, uint32_t>>& group, const vector<Vec>& vecs) {
-    auto u = randUniformUnitVec();
-    for (auto& p : group) {
-        p.first = dot256(u, vecs[p.second]);
-    }
-}
-
-pair<float, float> rehashMinMax(vector<pair<float, uint32_t>>& group, const vector<Vec>& vecs) {
-    float min = std::numeric_limits<float>::max();
-    float max = std::numeric_limits<float>::min();
-    auto u = randUniformUnitVec();
-    for (auto& p : group) {
-        float proj = dot256(u, vecs[p.second]);
-        p.first = proj;
-        min = std::min(proj, min);
-        max = std::max(proj, max);
-    }
-    return {min, max};
-}
-
-void splitRecursiveSingleThreaded(const vector<Vec>& points,vector<pair<float, uint32_t>>& group, vector<vector<pair<float, uint32_t>>>& allGroups) {
-    if (group.size() < maxGroupSize) {
-        allGroups.push_back(group);
-    } else {
-        // modify group in place
-        rehash(group, points);
-        auto otherGroup = splitInTwo(group);
-        splitRecursiveSingleThreaded(points, group, allGroups);
-        splitRecursiveSingleThreaded(points, otherGroup, allGroups);
-    }
 }
 
 // [first, second)

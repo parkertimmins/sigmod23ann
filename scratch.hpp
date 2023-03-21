@@ -91,27 +91,6 @@ Vec scalarMult128(float c, const Vec& vec) {
 }
 
 
-float dot(const Vec &lhs, const Vec &rhs) {
-    __m128 sum  = _mm_set1_ps(0);
-    auto* r = const_cast<float*>(rhs.data());
-    auto* l = const_cast<float*>(lhs.data());
-    for (uint32_t i = 0; i < 100; i+=4) {
-        __m128 rs = _mm_load_ps(r);
-        __m128 ls = _mm_load_ps(l);
-        __m128 prod = _mm_mul_ps(rs, ls);
-        sum = _mm_add_ps(sum, prod);
-        l += 4;
-        r += 4;
-    }
-    float sums[4] = {};
-    _mm_store_ps(sums, sum);
-    float ans = 0.0f;
-    for (float s: sums) {
-        ans += s;
-    }
-    return ans;
-}
-
 
 
 
@@ -891,6 +870,61 @@ void splitRecursiveNoSort(const vector<Vec>& points,vector<pair<float, uint32_t>
     }
 }
 
+
+void rehash(vector<pair<float, uint32_t>>& group, const vector<Vec>& vecs) {
+    auto u = randUniformUnitVec();
+    for (auto& p : group) {
+        p.first = dot(u, vecs[p.second]);
+    }
+}
+
+pair<float, float> rehashMinMax(vector<pair<float, uint32_t>>& group, const vector<Vec>& vecs) {
+    float min = std::numeric_limits<float>::max();
+    float max = std::numeric_limits<float>::min();
+    auto u = randUniformUnitVec();
+    for (auto& p : group) {
+        float proj = dot(u, vecs[p.second]);
+        p.first = proj;
+        min = std::min(proj, min);
+        max = std::max(proj, max);
+    }
+    return {min, max};
+}
+
+void splitRecursiveSingleThreaded(const vector<Vec>& points,vector<pair<float, uint32_t>>& group, vector<vector<pair<float, uint32_t>>>& allGroups) {
+    if (group.size() < maxGroupSize) {
+        allGroups.push_back(group);
+    } else {
+        // modify group in place
+        rehash(group, points);
+        auto otherGroup = splitInTwo(group);
+        splitRecursiveSingleThreaded(points, group, allGroups);
+        splitRecursiveSingleThreaded(points, otherGroup, allGroups);
+    }
+}
+
+
+
+float dot(const Vec &lhs, const Vec &rhs) {
+    __m128 sum  = _mm_set1_ps(0);
+    auto* r = const_cast<float*>(rhs.data());
+    auto* l = const_cast<float*>(lhs.data());
+    for (uint32_t i = 0; i < 100; i+=4) {
+        __m128 rs = _mm_load_ps(r);
+        __m128 ls = _mm_load_ps(l);
+        __m128 prod = _mm_mul_ps(rs, ls);
+        sum = _mm_add_ps(sum, prod);
+        l += 4;
+        r += 4;
+    }
+    float sums[4] = {};
+    _mm_store_ps(sums, sum);
+    float ans = 0.0f;
+    for (float s: sums) {
+        ans += s;
+    }
+    return ans;
+}
 
 
 
