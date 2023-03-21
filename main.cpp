@@ -61,6 +61,7 @@ using Range = pair<uint32_t, uint32_t>;
 uint64_t maxGroupSize = 200;
 uint64_t groupingTime = 0;
 uint64_t processGroupsTime = 0;
+std::default_random_engine rd(123);
 
 
 template<class T, class TVec = vector<T>>
@@ -106,33 +107,6 @@ float distance256(const Vec &lhs, const Vec &rhs) {
     return ans;
 }
 
-
-//float distance512(const Vec &lhs, const Vec &rhs) {
-//    __m512 sum  = _mm512_set1_ps(0);
-//    auto* r = const_cast<float*>(rhs.data());
-//    auto* l = const_cast<float*>(lhs.data());
-//    for (uint32_t i = 0; i < 96; i+=16) {
-//        __m512 rs = _mm512_load_ps(r);
-//        __m512 ls = _mm512_load_ps(l);
-//        __m512 diff = _mm512_sub_ps(ls, rs);
-//        __m512 prod = _mm512_mul_ps(diff, diff);
-//        sum = _mm512_add_ps(sum, prod);
-//        r += 16;
-//        l += 16;
-//    }
-//    float sums[16] = {};
-//    _mm512_store_ps(sums, sum);
-//    float ans = 0.0f;
-//    for (float s: sums) {
-//        ans += s;
-//    }
-//    for (unsigned i = 96; i < 100; ++i) {
-//        auto d = (lhs[i] - rhs[i]);
-//        ans += (d * d);
-//    }
-//    return ans;
-//}
-
 double norm(const Vec& vec) {
     float sumSquares = 0.0;
     for (auto& v : vec) {
@@ -157,7 +131,6 @@ Vec normalize(const Vec& vec) {
     return vec;
 }
 
-std::default_random_engine rd(123);
 Vec randUniformUnitVec(size_t dim=100) {
     std::mt19937 gen(rd());
     std::normal_distribution<> normalDist(0, 1);
@@ -441,6 +414,34 @@ uint32_t requiredHashFuncs(uint32_t numPoints, uint32_t maxBucketSize) {
     return numHashFuncs;
 }
 
+// assume range size is at least numIndices
+float getSplitPoint(vector<vector<float>>& hashes, std::vector<uint32_t>& indices, Range range, uint32_t depth) {
+    auto rangeSize = range.second - range.first;
+
+    if (rangeSize < 5'000) {
+        auto [min, max] = getBounds(hashes, indices, range, depth);
+        return (min + max) / 2;
+    }
+
+    uint32_t numIndices = pow(log(rangeSize), 1.5);
+    std::unordered_set<uint32_t> randIndices;
+    std::uniform_int_distribution<> distribution(range.first, range.second - 1);
+    while (randIndices.size() < numIndices) {
+        uint32_t idx = distribution(rd);
+        randIndices.insert(idx);
+    }
+
+    auto [min, max] = startBounds;
+    for (auto idx : randIndices) {
+        auto id = indices[idx];
+        auto proj = hashes[id][depth];
+        min = std::min(min, proj);
+        max = std::max(max, proj);
+    }
+    return (min + max) / 2;
+}
+
+
 void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vector<Range>& ranges, vector<uint32_t>& indices) {
     auto numPoints = points.size();
     auto numThreads = std::thread::hardware_concurrency();
@@ -498,20 +499,16 @@ void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vec
                         std::lock_guard<std::mutex> guard(groups_mtx);
                         ranges.push_back(range);
                     } else {
-                        auto [min, max] = getBounds(hashes, indices, range, depth);
-                        auto mid = min + (max - min) / 2;
-
+                        auto mid = getSplitPoint(hashes, indices, range, depth);
                         auto rangeBegin = indices.begin() + range.first;
                         auto rangeEnd = indices.begin() + range.second;
-
-                        auto middleIt = std::partition(rangeBegin, rangeEnd, [&](uint32_t id){
+                        auto middleIt = std::partition(rangeBegin, rangeEnd, [&](uint32_t id) {
                             auto proj = hashes[id][depth];
                             return proj <= mid;
                         });
-
-                        uint32_t rangeHalfSize = middleIt - rangeBegin;
-                        Range lo = {range.first, range.first + rangeHalfSize};
-                        Range hi = {range.first + rangeHalfSize , range.second};
+                        auto range1Size = middleIt - rangeBegin;
+                        Range lo = {range.first, range.first + range1Size};
+                        Range hi = {range.first + range1Size , range.second};
                         {
                             std::lock_guard<std::mutex> guard(stack_mtx);
                             stack.emplace_back( depth+1, lo);
