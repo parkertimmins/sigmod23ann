@@ -136,21 +136,45 @@ float distance256(const Vec &lhs, const Vec &rhs) {
         r += 8;
         l += 8;
     }
-
     float sums[8] = {};
     _mm256_store_ps(sums, sum);
     float ans = 0.0f;
     for (float s: sums) {
         ans += s;
     }
-
     for (unsigned i = 96; i < 100; ++i) {
         auto d = (lhs[i] - rhs[i]);
         ans += (d * d);
     }
-
     return ans;
 }
+
+
+//float distance512(const Vec &lhs, const Vec &rhs) {
+//    __m512 sum  = _mm512_set1_ps(0);
+//    auto* r = const_cast<float*>(rhs.data());
+//    auto* l = const_cast<float*>(lhs.data());
+//    for (uint32_t i = 0; i < 96; i+=16) {
+//        __m512 rs = _mm512_load_ps(r);
+//        __m512 ls = _mm512_load_ps(l);
+//        __m512 diff = _mm512_sub_ps(ls, rs);
+//        __m512 prod = _mm512_mul_ps(diff, diff);
+//        sum = _mm512_add_ps(sum, prod);
+//        r += 16;
+//        l += 16;
+//    }
+//    float sums[16] = {};
+//    _mm512_store_ps(sums, sum);
+//    float ans = 0.0f;
+//    for (float s: sums) {
+//        ans += s;
+//    }
+//    for (unsigned i = 96; i < 100; ++i) {
+//        auto d = (lhs[i] - rhs[i]);
+//        ans += (d * d);
+//    }
+//    return ans;
+//}
 
 double norm(const Vec& vec) {
     float sumSquares = 0.0;
@@ -259,6 +283,32 @@ Vec scalarMult128(float c, const Vec& vec) {
     }
     return result;
 }
+
+float dot256(const Vec &lhs, const Vec &rhs) {
+    __m256 sum  = _mm256_set1_ps(0);
+    auto* r = const_cast<float*>(rhs.data());
+    auto* l = const_cast<float*>(lhs.data());
+    for (uint32_t i = 0; i < 100; i+=8) {
+        __m256 rs = _mm256_load_ps(r);
+        __m256 ls = _mm256_load_ps(l);
+        __m256 prod = _mm256_mul_ps(rs, ls);
+        sum = _mm256_add_ps(sum, prod);
+        l += 8;
+        r += 8;
+    }
+    float sums[8] = {};
+    _mm256_store_ps(sums, sum);
+    float ans = 0.0f;
+    for (float s: sums) {
+        ans += s;
+    }
+    for (unsigned i = 96; i < 100; ++i) {
+        auto d = (lhs[i] - rhs[i]);
+        ans += (d * d);
+    }
+    return ans;
+}
+
 
 float dot(const Vec &lhs, const Vec &rhs) {
     __m128 sum  = _mm_set1_ps(0);
@@ -1248,7 +1298,7 @@ void splitHorizontalThread(uint32_t numHashFuncs, const vector<Vec>& points, vec
                 vector<float>& hashSet = hashes[i];
                 for (uint32_t h = 0; h < numHashFuncs; ++h) {
                     const auto& unitVec = unitVecs[h];
-                    float proj = dot(unitVec, vec);
+                    float proj = dot256(unitVec, vec);
                     hashSet.push_back(proj);
                 }
             }
