@@ -38,31 +38,6 @@ run:
     10 iteration
     percent: 2.83416 
     time 4m20s
-
-
-run:
-    group size < 200
-    7 iteration
-    time 60s
-    percent: 2.26304
-
-
-Splits sizes based on power of 2 splits:
-0 1000000
-1 500000
-2 250000
-3 125000
-4 62500
-5 31250
-6 15625
-7 7812
-8 3906
-9 1953
-10 976
-11 488
-12 244
-13 122
-14 61
-
+ 
 
 
