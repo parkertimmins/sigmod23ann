@@ -17,7 +17,6 @@
 #include <limits>
 #include <cstring>
 #include "io.h"
-#include <smmintrin.h>
 #include <emmintrin.h>
 #include <immintrin.h>
 
@@ -34,8 +33,9 @@ using std::unordered_map;
 using std::make_pair;
 using std::pair;
 using std::vector;
-using Vec = vector<float>;
 using Range = pair<uint32_t, uint32_t>;
+
+
 
 /**
  * Docs used
@@ -125,12 +125,16 @@ float distance128(const Vec &lhs, const Vec &rhs) {
 
 float distance256(const Vec &lhs, const Vec &rhs) {
     __m256 sum  = _mm256_set1_ps(0);
+    auto* r = const_cast<float*>(rhs.data());
+    auto* l = const_cast<float*>(lhs.data());
     for (uint32_t i = 0; i < 96; i+=8) {
-        __m256 rs = _mm256_load_ps(rhs.data() + i);
-        __m256 ls = _mm256_load_ps(lhs.data() + i);
+        __m256 rs = _mm256_load_ps(r);
+        __m256 ls = _mm256_load_ps(l);
         __m256 diff = _mm256_sub_ps(ls, rs);
         __m256 prod = _mm256_mul_ps(diff, diff);
         sum = _mm256_add_ps(sum, prod);
+        r += 8;
+        l += 8;
     }
 
     float sums[8] = {};
@@ -140,7 +144,7 @@ float distance256(const Vec &lhs, const Vec &rhs) {
         ans += s;
     }
 
-    for (unsigned i = 97; i < 100; ++i) {
+    for (unsigned i = 96; i < 100; ++i) {
         auto d = (lhs[i] - rhs[i]);
         ans += (d * d);
     }
@@ -173,7 +177,7 @@ Vec normalize(const Vec& vec) {
 }
 
 std::default_random_engine rd(123);
-vector<float> randUniformUnitVec(size_t dim=100) {
+Vec randUniformUnitVec(size_t dim=100) {
     std::mt19937 gen(rd());
     std::normal_distribution<> normalDist(0, 1);
 
@@ -219,7 +223,6 @@ Vec sub128(const Vec& lhs, const Vec& rhs) {
 
 
 void plusEq(Vec& lhs, const Vec& rhs) {
-    auto dim = lhs.size();
     auto* r = const_cast<float*>(rhs.data());
     auto* l = const_cast<float*>(lhs.data());
     for (uint32_t i = 0; i < 100; i+=4) {
@@ -242,7 +245,7 @@ Vec scalarMult(float c, const Vec& vec) {
 }
 
 Vec scalarMult128(float c, const Vec& vec) {
-    auto dim = 100;
+    uint32_t dim = 100;
     Vec result(dim);
     __m128 cs = _mm_set1_ps(c);
     auto* v = const_cast<float*>(vec.data());
@@ -309,7 +312,7 @@ uint64_t makeSignature(const Vec& randUnit, const Vec& vec) {
 }
 
 unordered_map<uint64_t, float> distCache;
-float distanceCached(const vector<vector<float>> &points, uint32_t id1, uint32_t id2) {
+float distanceCached(const vector<Vec> &points, uint32_t id1, uint32_t id2) {
     uint64_t pair = id1 < id2 ? ((static_cast<uint64_t>(id1) << 32) | id2) : ((static_cast<uint64_t>(id2) << 32) | id1);
     auto iter = distCache.find(pair);
     if (iter == distCache.end()) {
@@ -322,7 +325,7 @@ float distanceCached(const vector<vector<float>> &points, uint32_t id1, uint32_t
     }
 }
 
-vector<uint32_t> CalculateOneKnn(const vector<vector<float>> &data,
+vector<uint32_t> CalculateOneKnn(const vector<Vec> &data,
                                  const vector<uint32_t> &sample_indexes,
                                  const uint32_t id) {
     std::priority_queue<std::pair<float, uint32_t>> top_candidates;
@@ -652,7 +655,7 @@ public:
 
 
 
-void addCandidates(const vector<vector<float>> &points,
+void addCandidates(const vector<Vec> &points,
                    vector<uint32_t>& indices,
                    Range range,
                    vector<KnnSetScannable>& idToKnn) {
@@ -661,7 +664,7 @@ void addCandidates(const vector<vector<float>> &points,
         auto& knn1 = idToKnn[id1];
         for (uint32_t j=i+1; j < range.second; ++j) {
             auto id2 = indices[j];
-            float dist = distance128(points[id1], points[id2]);
+            float dist = distance256(points[id1], points[id2]);
             knn1.addCandidate(id2, dist);
             idToKnn[id2].addCandidate(id1, dist);
         }
@@ -669,7 +672,7 @@ void addCandidates(const vector<vector<float>> &points,
 }
 
 
-void addCandidatesComputeDist(const vector<vector<float>> &points,
+void addCandidatesComputeDist(const vector<Vec> &points,
                              vector<uint32_t>& indices,
                              Range range,
                              vector<KnnSetScannable>& idToKnn) {
@@ -687,7 +690,7 @@ void addCandidatesComputeDist(const vector<vector<float>> &points,
 }
 
 
-void addCandidatesStoreDist(const vector<vector<float>> &points,
+void addCandidatesStoreDist(const vector<Vec> &points,
                    vector<uint32_t>& indices,
                    Range range,
                    vector<KnnSetScannable>& idToKnn,
@@ -720,7 +723,7 @@ void addCandidatesStoreDist(const vector<vector<float>> &points,
     }
 }
 
-void addCandidatesSortMerge(const vector<vector<float>> &points,
+void addCandidatesSortMerge(const vector<Vec> &points,
                             vector<uint32_t>& indices,
                             Range range,
                             vector<KnnSetScannable>& idToKnn) {
@@ -745,7 +748,6 @@ void addCandidatesSortMerge(const vector<vector<float>> &points,
     for (uint32_t i=range.first, k=0; i < range.second; ++i, ++k) {
         auto id1 = indices[i];
         auto& knn1 = idToKnn[id1];
-        auto& pt1 = points[id1];
 
         uint32_t ll = 0;
         for (uint32_t j=range.first, l=0; j < range.second; ++j, ++l) {
@@ -991,7 +993,7 @@ void print(const vector<float>& ts) {
     std::cout << std::endl;
 }
 
-vector<float> getMeans(const vector<Vec>& vecs) {
+Vec getMeans(const vector<Vec>& vecs) {
     uint32_t dim = 100;
     uint32_t numRows = vecs.size();
     vector<double> sums(dim, 0);
@@ -1013,15 +1015,13 @@ Vec pca1(const vector<Vec>& vecs) {
 
     auto r = randUniformUnitVec();
 
-    auto start = hclock::now();
     for (auto c = 0; c < 10; ++c) {
         Vec s(dim, 0);
         for (auto& v : vecs) {
             auto x = sub(v, means);
             plusEq(s, scalarMult(dot(x, r), x));
         }
-        auto lambda = dot(r, s);
-//        auto error = sub(scalarMult(lambda, r), s);
+//        auto lambda = dot(r, s);
 
         normalizeInPlace(s);
         r = s;
@@ -1037,7 +1037,7 @@ Vec pca1(const vector<Vec>& vecs) {
 }
 
 
-vector<float> getMeans(vector<pair<float, uint32_t>>& group, const vector<Vec>& vecs) {
+Vec getMeans(vector<pair<float, uint32_t>>& group, const vector<Vec>& vecs) {
     uint32_t dim = 100;
     uint32_t numRows = group.size();
     vector<double> sums(dim, 0);
@@ -1069,8 +1069,7 @@ Vec pca1(vector<pair<float, uint32_t>>& group, const vector<Vec>& vecs) {
             auto x = sub(v, means);
             plusEq(s, scalarMult(dot(x, r), x));
         }
-        auto lambda = dot(r, s);
-//        auto error = sub(scalarMult(lambda, r), s);
+//        auto lambda = dot(r, s);
 
         normalizeInPlace(s);
         r = s;
@@ -1091,7 +1090,7 @@ vector<Vec> gramSchmidt(vector<Vec>& v) {
     u[0] = normalize(v[0]);
     for (uint32_t i = 1; i < v.size(); ++i) {
         u[i] = v[i];
-        for (auto j = 0; j < i; ++j) {
+        for (uint32_t j = 0; j < i; ++j) {
             u[i] = sub(u[i], project(u[j], v[i]));
         }
         u[i] = normalize(u[i]);
@@ -1515,7 +1514,7 @@ int main(int argc, char **argv) {
   }
 
   // Read data points
-  vector<vector<float>> nodes;
+  vector<Vec> nodes;
 
   auto startRead = hclock::now();
   ReadBin(source_path, nodes);

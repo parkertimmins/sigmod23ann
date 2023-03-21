@@ -9,6 +9,10 @@
 #include <numeric>
 #include <string>
 #include <vector>
+#include <smmintrin.h>
+#include <emmintrin.h>
+#include <immintrin.h>
+#include <boost/align/aligned_allocator.hpp>
 
 #include "assert.h"
 
@@ -16,6 +20,10 @@ using std::cout;
 using std::endl;
 using std::string;
 using std::vector;
+
+template<class T, std::size_t Alignment = sizeof(__m256)>
+using aligned_vector = std::vector<T, boost::alignment::aligned_allocator<T, Alignment> >;
+using Vec = aligned_vector<float>;
 
 /// @brief Save knng in binary format (uint32_t) with name "output.bin"
 /// @param knng a (N * 100) shape 2-D vector
@@ -40,7 +48,7 @@ void SaveKNNG(const std::vector<std::vector<uint32_t>> &knng,
 /// @param file_path file path of binary data
 /// @param data returned 2D data vectors
 void ReadBin(const std::string &file_path,
-             std::vector<std::vector<float>> &data) {
+             std::vector<Vec> &data) {
   std::cout << "Reading Data: " << file_path << std::endl;
   std::ifstream ifs;
   ifs.open(file_path, std::ios::binary);
@@ -52,10 +60,10 @@ void ReadBin(const std::string &file_path,
   std::cout << "# of points: " << N << std::endl;
 
   const int num_dimensions = 100;
-  std::vector<float> buff(num_dimensions);
+  Vec buff(num_dimensions);
   int counter = 0;
   while (ifs.read((char *)buff.data(), num_dimensions * sizeof(float))) {
-    std::vector<float> row(num_dimensions);
+    Vec row(num_dimensions);
     for (int d = 0; d < num_dimensions; d++) {
       row[d] = static_cast<float>(buff[d]);
     }
