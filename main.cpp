@@ -58,7 +58,7 @@ pair<float, float> startBounds = {std::numeric_limits<float>::max(), std::numeri
  * https://www.youtube.com/watch?v=cn15P8vgB1A&ab_channel=RioICM2018
  */
 
-//#define PRINT_OUTPUT
+#define PRINT_OUTPUT
 
 
 uint64_t groupingTime = 0;
@@ -474,7 +474,7 @@ pair<float, float> getBounds(vector<vector<float>>& hashes, std::vector<uint32_t
     return {min, max};
 }
 
-uint32_t requiredHashFuncs4Split(uint32_t numPoints, uint32_t maxBucketSize) {
+uint32_t requiredHashFuncs4way(uint32_t numPoints, uint32_t maxBucketSize) {
     uint32_t groupSize = numPoints;
     uint32_t numHashFuncs = 0;
     while (groupSize > maxBucketSize) {
@@ -851,7 +851,6 @@ void splitHorizontalHistogram4way(uint32_t numHashFuncs, uint32_t numPoints, flo
     // compute quantile split points
     vector<vector<float>> splitsBounds(numHashFuncs);
     for (uint32_t h = 0; h < numHashFuncs; ++h) {
-        splitsBounds[h].resize(4-1);
         uint32_t pointsSeen = 0;
         bool q1 = false, q2=false, q3=false;
         for (uint32_t b = 0; b < numHistogramBuckets; ++b) {
@@ -862,18 +861,17 @@ void splitHorizontalHistogram4way(uint32_t numHashFuncs, uint32_t numPoints, flo
                 auto [bucketStart, bucketEnd] = getBucketBounds(globalBounds[h], numHistogramBuckets, b);
                 std::uniform_real_distribution<float> distribution(bucketStart, bucketEnd);
                 splitsBounds[h].push_back(distribution(rd));
-            }
-            if (!q2 && pointsSeen >= numPoints / 2) {
+            } else if (!q2 && pointsSeen >= numPoints / 2) {
                 q2 = true;
                 auto [bucketStart, bucketEnd] = getBucketBounds(globalBounds[h], numHistogramBuckets, b);
                 std::uniform_real_distribution<float> distribution(bucketStart, bucketEnd);
                 splitsBounds[h].push_back(distribution(rd));
-            }
-            if (!q3 && pointsSeen >= 3 * numPoints / 4) {
+            } else if (!q3 && pointsSeen >= 3 * numPoints / 4) {
                 q3 = true;
                 auto [bucketStart, bucketEnd] = getBucketBounds(globalBounds[h], numHistogramBuckets, b);
                 std::uniform_real_distribution<float> distribution(bucketStart, bucketEnd);
                 splitsBounds[h].push_back(distribution(rd));
+                break;
             }
         }
     }
@@ -1342,7 +1340,7 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
     std::vector<uint32_t> newToOldIndices(numPoints);
     float (*points)[104] = reinterpret_cast<float(*)[104]>(new __m256[(numPoints * 104 * sizeof(float)) / sizeof(__m256)]);
     splitSortForAdjacency(pointsRead, newToOldIndices, points, numThreads, numPoints, ranges);
-    uint32_t numHashFuncs = requiredHashFuncs(numPoints, 300);
+    uint32_t numHashFuncs = requiredHashFuncs4way(numPoints, 300);
 
     uint32_t iteration = 0;
     while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
@@ -1353,7 +1351,7 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
 
         std::unordered_map<uint64_t, vector<uint32_t>> globalGroups;
         auto startGroup = hclock::now();
-        splitHorizontalMean(numHashFuncs, numPoints, points, globalGroups);
+        splitHorizontalHistogram4way(numHashFuncs, numPoints, points, globalGroups);
         auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
         groupingTime += groupDuration;
 
@@ -1411,7 +1409,6 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
 }
 
 int main(int argc, char **argv) {
-  std::ios::sync_with_stdio(false);
   auto startTime = hclock::now();
 
   string source_path = "dummy-data.bin";
