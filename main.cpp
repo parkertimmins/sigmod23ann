@@ -602,11 +602,13 @@ void splitHorizontalUniformSample(uint32_t numHashFuncs, uint32_t numPoints, flo
 
     for (unordered_map<uint64_t, vector<uint32_t>>& localGroupSet: localGroups) {
         for (auto& [sig, group] : localGroupSet) {
-            if (globalGroups.find(sig) == globalGroups.end()) {
-                globalGroups[sig] = vector<uint32_t>();
+            auto it = globalGroups.find(sig);
+            if (it == globalGroups.end()) {
+                 globalGroups[sig] = group;
+            } else {
+                auto& globalGroup = it->second;
+                globalGroup.insert(globalGroup.end(), group.begin(), group.end());
             }
-            auto& globalGroup = globalGroups[sig];
-            globalGroup.insert(globalGroup.end(), group.begin(), group.end());
         }
     }
     std::cout << "histogram split time: " << duration_cast<milliseconds>(hclock::now() - startSplit).count() << std::endl;
@@ -692,11 +694,12 @@ void splitHorizontalMean(uint32_t numHashFuncs, uint32_t numPoints, float points
                         sig |= (1 << h);
                     }
                 }
-
-                if (groups.find(sig) == groups.end()) {
-                    groups[sig] = vector<uint32_t>();
+                auto it = groups.find(sig);
+                if (it == groups.end()) {
+                    groups[sig] = {i};
+                } else {
+                    it->second.push_back(i);
                 }
-                groups[sig].push_back(i);
             }
         });
     }
@@ -705,11 +708,14 @@ void splitHorizontalMean(uint32_t numHashFuncs, uint32_t numPoints, float points
 
     for (unordered_map<uint64_t, vector<uint32_t>>& localGroupSet: localGroups) {
         for (auto& [sig, group] : localGroupSet) {
-            if (globalGroups.find(sig) == globalGroups.end()) {
-                globalGroups[sig] = vector<uint32_t>();
+
+            auto it = globalGroups.find(sig);
+            if (it == globalGroups.end()) {
+                globalGroups[sig] = group;
+            } else {
+                auto& globalGroup = it->second;
+                globalGroup.insert(globalGroup.end(), group.begin(), group.end());
             }
-            auto& globalGroup = globalGroups[sig];
-            globalGroup.insert(globalGroup.end(), group.begin(), group.end());
         }
     }
     std::cout << "histogram split time: " << duration_cast<milliseconds>(hclock::now() - startSplit).count() << std::endl;
@@ -854,23 +860,27 @@ void splitHorizontalHistogram(uint32_t numHashFuncs, uint32_t numPoints, float p
                     }
                 }
 
-                if (groups.find(sig) == groups.end()) {
-                    groups[sig] = vector<uint32_t>();
+                auto it = groups.find(sig);
+                if (it == groups.end()) {
+                    groups[sig] = {i};
+                } else {
+                    it->second.push_back(i);
                 }
-                groups[sig].push_back(i);
             }
         });
     }
     for (auto& thread: threads) { thread.join(); }
 
-
     for (unordered_map<uint64_t, vector<uint32_t>>& localGroupSet: localGroups) {
         for (auto& [sig, group] : localGroupSet) {
-            if (globalGroups.find(sig) == globalGroups.end()) {
-                globalGroups[sig] = vector<uint32_t>();
+
+            auto it = globalGroups.find(sig);
+            if (it == globalGroups.end()) {
+                globalGroups[sig] = group;
+            } else {
+                auto& globalGroup = it->second;
+                globalGroup.insert(globalGroup.end(), group.begin(), group.end());
             }
-            auto& globalGroup = globalGroups[sig];
-            globalGroup.insert(globalGroup.end(), group.begin(), group.end());
         }
     }
     std::cout << "histogram split time: " << duration_cast<milliseconds>(hclock::now() - startSplit).count() << std::endl;
@@ -1116,7 +1126,7 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
         auto startGroup = hclock::now();
         uint32_t numHashFuncs = requiredHashFuncs(numPoints, 300);
         std::unordered_map<uint64_t, vector<uint32_t>> globalGroups;
-        splitHorizontalUniformSample(numHashFuncs, numPoints, points, globalGroups);
+        splitHorizontalMean(numHashFuncs, numPoints, points, globalGroups);
         auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
         groupingTime += groupDuration;
 
