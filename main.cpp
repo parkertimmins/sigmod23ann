@@ -929,9 +929,9 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
                     auto sig = *optSig;
                     auto& group = globalGroups[sig];
                     count += group.size();
-//                        if (group.size() <= 300) {
-                    addCandidatesGroup(points, group, idToKnn);
-//                        }
+                    if (group.size() <= 300) {
+                        addCandidatesGroup(points, group, idToKnn);
+                    }
                     optSig = tasks.getTask();
                 }
             });
