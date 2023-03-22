@@ -588,11 +588,12 @@ void splitHorizontalUniformSample(uint32_t numHashFuncs, uint32_t numPoints, flo
                         sig |= (1 << h);
                     }
                 }
-
-                if (groups.find(sig) == groups.end()) {
-                    groups[sig] = vector<uint32_t>();
+                auto it = groups.find(sig);
+                if (it == groups.end()) {
+                    groups[sig] = {i};
+                } else {
+                    it->second.push_back(i);
                 }
-                groups[sig].push_back(i);
             }
         });
     }
