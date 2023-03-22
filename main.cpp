@@ -58,7 +58,6 @@ using Range = pair<uint32_t, uint32_t>;
  * https://www.youtube.com/watch?v=cn15P8vgB1A&ab_channel=RioICM2018
  */
 
-//#define MEASURE_ACTUAL_GROUP_MAX
 
 uint64_t groupingTime = 0;
 uint64_t processGroupsTime = 0;
@@ -550,9 +549,7 @@ void splitHorizontalThreadArray(uint32_t maxGroupSize, uint32_t numHashFuncs, ui
                         count += rangeSize;
                         std::lock_guard<std::mutex> guard(groups_mtx);
                         ranges.push_back(range);
-#ifdef MEASURE_ACTUAL_GROUP_MAX
-                        actualMaxGroupsSize = std::max(rangeSize, actualMaxGroupsSize); // This slows down lock unlock
-#endif
+                        actualMaxGroupsSize = std::max(rangeSize, actualMaxGroupsSize);
                     } else {
                         auto [min, max] = getBounds(hashes, indices, range, depth);
                         auto mid = (min + max) / 2;
@@ -581,10 +578,7 @@ void splitHorizontalThreadArray(uint32_t maxGroupSize, uint32_t numHashFuncs, ui
     for (auto& thread: threads) { thread.join(); }
 
     std::cout << "group regroup time: " << duration_cast<milliseconds>(hclock::now() - startRegroup).count() << std::endl;
-
-#ifdef MEASURE_ACTUAL_GROUP_MAX
     std::cout << "group regroup maximum group size: " << actualMaxGroupsSize << std::endl;
-#endif
 }
 
 
@@ -674,6 +668,28 @@ void splitHorizontalThreadVector(uint32_t maxGroupSize, uint32_t numHashFuncs, c
     std::cout << "group regroup time: " << duration_cast<milliseconds>(hclock::now() - startRegroup).count() << std::endl;
 }
 
+void splitSortForAdjacency(vector<Vec>& pointsRead, std::vector<uint32_t>& newToOldIndices, float points[][104], uint32_t numThreads, uint32_t numPoints, vector<Range>& ranges) {
+    auto startAdjacencySort = hclock::now();
+    std::iota(newToOldIndices.begin(), newToOldIndices.end(), 0);
+    splitHorizontalThreadVector(200, requiredHashFuncs(pointsRead.size(), 200), pointsRead, ranges, newToOldIndices);
+    vector<Range> moveRanges = splitRange({0, numPoints}, numThreads);
+    vector<std::thread> threads;
+    for (uint32_t t = 0; t < numThreads; ++t) {
+        threads.emplace_back([&, t]() {
+            auto moveRange = moveRanges[t];
+            for (uint32_t newIdx = moveRange.first; newIdx < moveRange.second; ++newIdx) {
+                auto oldIdx = newToOldIndices[newIdx];
+                memcpy(points[newIdx], pointsRead[oldIdx].data(), sizeof(float) * dims);
+            }
+        });
+    }
+    for (auto& thread: threads) { thread.join(); }
+
+    pointsRead.clear();
+    auto adjacencySortDuration = duration_cast<milliseconds>(hclock::now() - startAdjacencySort).count();
+    std::cout << "adjacency sort time: " << adjacencySortDuration << std::endl;
+}
+
 void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>& result) {
 
     long timeBoundsMs;
@@ -688,44 +704,21 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
     auto startTime = hclock::now();
     vector<KnnSetScannable> idToKnn(pointsRead.size());
     uint32_t numPoints = pointsRead.size();
+    auto numThreads = std::thread::hardware_concurrency();
 
-
-    // put into adjacent (hopefully) memory locations
-    std::vector<uint32_t> newToOldIndices(numPoints);
-    std::iota(newToOldIndices.begin(), newToOldIndices.end(), 0);
+    // rewrite point data in adjacent memory and sort in a group order
     vector<Range> ranges;
-    splitHorizontalThreadVector(200, requiredHashFuncs(pointsRead.size(), 200), pointsRead, ranges, newToOldIndices);
+    std::vector<uint32_t> newToOldIndices(numPoints);
     float (*points)[104] = reinterpret_cast<float(*)[104]>(new __m256[(numPoints * 104 * sizeof(float)) / sizeof(__m256)]);
-
-    auto startAdjacencySort = hclock::now();
-    for (uint32_t newIdx = 0; newIdx < numPoints; ++newIdx) {
-        auto oldIdx = newToOldIndices[newIdx];
-        memcpy(points[newIdx], pointsRead[oldIdx].data(), sizeof(float) * dims);
-    }
-    pointsRead.clear();
-    auto adjacencySortDuration = duration_cast<milliseconds>(hclock::now() - startAdjacencySort).count();
-    std::cout << "adjacency sort time: " << adjacencySortDuration << std::endl;
-
-
+    splitSortForAdjacency(pointsRead, newToOldIndices, points, numThreads, numPoints, ranges);
+    std::vector<uint32_t> indices = newToOldIndices;
 
     uint32_t iteration = 0;
     while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
         std::cout << "Iteration: " << iteration << std::endl;
-        auto startGroup = hclock::now();
-
-        uint32_t numHashFuncs = requiredHashFuncs(numPoints, 300);
-        std::vector<uint32_t> indices(numPoints);
-        std::iota(indices.begin(), indices.end(), 0);
-        vector<Range> ranges;
-        splitHorizontalThreadArray(200, numHashFuncs, numPoints, points, ranges, indices);
-
-        auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
-        groupingTime += groupDuration;
-
 
         auto startProcessing = hclock::now();
 
-        auto numThreads = std::thread::hardware_concurrency();
         vector<std::thread> threads;
         Task<Range> tasks(ranges);
         std::atomic<uint32_t> count = 0;
@@ -748,8 +741,16 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
         processGroupsTime += processingDuration;
 
         std::cout << "processing time: " << processingDuration << std::endl;
-        std::cout << "--------------------------------------------------------------------------------------------------------" << std::endl;
 
+        auto startGroup = hclock::now();
+        uint32_t numHashFuncs = requiredHashFuncs(numPoints, 300);
+        ranges.clear();
+        std::iota(indices.begin(), indices.end(), 0);
+        splitHorizontalThreadArray(200, numHashFuncs, numPoints, points, ranges, indices);
+        auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
+        groupingTime += groupDuration;
+
+        std::cout << "--------------------------------------------------------------------------------------------------------" << std::endl;
         iteration++;
     }
 
