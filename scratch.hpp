@@ -692,15 +692,6 @@ void plusEq(Vec& lhs, const Vec& rhs) {
     }
 }
 
-template<class K, class V>
-vector<K> getKeys(std::unordered_map<K, V>& map) {
-    vector<K> keys;
-    for(const auto& kv : map) {
-        keys.push_back(kv.first);
-    }
-    return keys;
-}
-
 void print(const vector<float>& ts) {
     for (float t: ts)
         std::cout << t << ", ";
