@@ -67,28 +67,6 @@ const uint32_t dims = 100;
 const uint32_t k = 100;
 
 
-struct Spinlock {
-    std::atomic<bool> latch = false;
-
-    inline void lock() {
-        bool expected = false;
-        while(!latch.compare_exchange_weak(expected, true)) {
-            expected = false;
-        }
-    }
-
-    inline bool try_lock() {
-        bool expected = false;
-        return latch.compare_exchange_strong(expected, true);
-    }
-
-    inline void unlock() {
-        bool expected = true;
-        latch.compare_exchange_strong(expected, false);
-    }
-};
-
-
 template<class T, class TVec = vector<T>>
 struct Task {
     TVec& tasks;
@@ -553,8 +531,8 @@ void splitHorizontalThreadArray(uint32_t maxGroupSize, uint32_t numHashFuncs, ui
 
     vector<pair<uint32_t, Range>> stack;
     stack.emplace_back(0, make_pair(0, numPoints));
-    Spinlock stack_lock;
-    Spinlock groups_lock;
+    std::mutex stack_mtx;
+    std::mutex groups_mtx;
     uint32_t actualMaxGroupsSize = 0;
 
     threads.clear();
@@ -562,17 +540,16 @@ void splitHorizontalThreadArray(uint32_t maxGroupSize, uint32_t numHashFuncs, ui
     for (uint32_t t = 0; t < numThreads; ++t) {
         threads.emplace_back([&]() {
             while (count < numPoints) {
-                stack_lock.lock();
+                stack_mtx.lock();
                 if (!stack.empty()) {
                     auto [depth, range] = stack.back(); stack.pop_back();
-                    stack_lock.unlock();
+                    stack_mtx.unlock();
                     uint32_t rangeSize = range.second - range.first;
 
                     if (rangeSize < maxGroupSize || depth == numHashFuncs) {
                         count += rangeSize;
-                        groups_lock.lock();
+                        std::lock_guard<std::mutex> guard(groups_mtx);
                         ranges.push_back(range);
-                        groups_lock.unlock();
 #ifdef MEASURE_ACTUAL_GROUP_MAX
                         actualMaxGroupsSize = std::max(rangeSize, actualMaxGroupsSize); // This slows down lock unlock
 #endif
@@ -589,14 +566,13 @@ void splitHorizontalThreadArray(uint32_t maxGroupSize, uint32_t numHashFuncs, ui
                         Range lo = {range.first, range.first + range1Size};
                         Range hi = {range.first + range1Size , range.second};
                         {
-                            stack_lock.lock();
+                            std::lock_guard<std::mutex> guard(stack_mtx);
                             stack.emplace_back(depth+1, lo);
                             stack.emplace_back(depth+1, hi);
-                            stack_lock.unlock();
                         }
                     }
                 } else {
-                    stack_lock.unlock();
+                    stack_mtx.unlock();
                 }
             }
 
@@ -651,25 +627,24 @@ void splitHorizontalThreadVector(uint32_t maxGroupSize, uint32_t numHashFuncs, c
 
     vector<pair<uint32_t, Range>> stack;
     stack.emplace_back(0, make_pair(0, numPoints));
-    Spinlock stack_lock;
-    Spinlock groups_lock;
+    std::mutex stack_mtx;
+    std::mutex groups_mtx;
 
     threads.clear();
     std::atomic<uint32_t> count = 0;
     for (uint32_t t = 0; t < numThreads; ++t) {
         threads.emplace_back([&]() {
             while (count < numPoints) {
-                stack_lock.lock();
+                stack_mtx.lock();
                 if (!stack.empty()) {
                     auto [depth, range] = stack.back(); stack.pop_back();
-                    stack_lock.unlock();
+                    stack_mtx.unlock();
                     uint32_t rangeSize = range.second - range.first;
 
                     if (rangeSize < maxGroupSize || depth == numHashFuncs) {
                         count += rangeSize;
-                        groups_lock.lock();
+                        std::lock_guard<std::mutex> guard(groups_mtx);
                         ranges.push_back(range);
-                        groups_lock.unlock();
                     } else {
                         auto mid = getSplitPoint(hashes, indices, range, depth);
                         auto rangeBegin = indices.begin() + range.first;
@@ -682,14 +657,13 @@ void splitHorizontalThreadVector(uint32_t maxGroupSize, uint32_t numHashFuncs, c
                         Range lo = {range.first, range.first + range1Size};
                         Range hi = {range.first + range1Size , range.second};
                         {
-                            stack_lock.lock();
+                            std::lock_guard<std::mutex> guard(stack_mtx);
                             stack.emplace_back(depth+1, lo);
                             stack.emplace_back(depth+1, hi);
-                            stack_lock.unlock();
                         }
                     }
                 } else {
-                    stack_lock.unlock();
+                    stack_mtx.unlock();
                 }
             }
 
@@ -698,28 +672,6 @@ void splitHorizontalThreadVector(uint32_t maxGroupSize, uint32_t numHashFuncs, c
     for (auto& thread: threads) { thread.join(); }
 
     std::cout << "group regroup time: " << duration_cast<milliseconds>(hclock::now() - startRegroup).count() << std::endl;
-}
-
-void splitSortForAdjacency(vector<Vec>& pointsRead, std::vector<uint32_t>& newToOldIndices, float points[][104], uint32_t numThreads, uint32_t numPoints, vector<Range>& ranges) {
-    auto startAdjacencySort = hclock::now();
-    std::iota(newToOldIndices.begin(), newToOldIndices.end(), 0);
-    splitHorizontalThreadVector(200, requiredHashFuncs(pointsRead.size(), 200), pointsRead, ranges, newToOldIndices);
-    vector<Range> moveRanges = splitRange({0, numPoints}, numThreads);
-    vector<std::thread> threads;
-    for (uint32_t t = 0; t < numThreads; ++t) {
-        threads.emplace_back([&, t]() {
-            auto moveRange = moveRanges[t];
-            for (uint32_t newIdx = moveRange.first; newIdx < moveRange.second; ++newIdx) {
-                auto oldIdx = newToOldIndices[newIdx];
-                memcpy(points[newIdx], pointsRead[oldIdx].data(), sizeof(float) * dims);
-            }
-        });
-    }
-    for (auto& thread: threads) { thread.join(); }
-
-    pointsRead.clear();
-    auto adjacencySortDuration = duration_cast<milliseconds>(hclock::now() - startAdjacencySort).count();
-    std::cout << "adjacency sort time: " << adjacencySortDuration << std::endl;
 }
 
 void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>& result) {
@@ -736,21 +688,44 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
     auto startTime = hclock::now();
     vector<KnnSetScannable> idToKnn(pointsRead.size());
     uint32_t numPoints = pointsRead.size();
-    auto numThreads = std::thread::hardware_concurrency();
 
-    // rewrite point data in adjacent memory and sort in a group order
-    vector<Range> ranges;
+
+    // put into adjacent (hopefully) memory locations
     std::vector<uint32_t> newToOldIndices(numPoints);
+    std::iota(newToOldIndices.begin(), newToOldIndices.end(), 0);
+    vector<Range> ranges;
+    splitHorizontalThreadVector(200, requiredHashFuncs(pointsRead.size(), 200), pointsRead, ranges, newToOldIndices);
     float (*points)[104] = reinterpret_cast<float(*)[104]>(new __m256[(numPoints * 104 * sizeof(float)) / sizeof(__m256)]);
-    splitSortForAdjacency(pointsRead, newToOldIndices, points, numThreads, numPoints, ranges);
-    std::vector<uint32_t> indices = newToOldIndices;
+
+    auto startAdjacencySort = hclock::now();
+    for (uint32_t newIdx = 0; newIdx < numPoints; ++newIdx) {
+        auto oldIdx = newToOldIndices[newIdx];
+        memcpy(points[newIdx], pointsRead[oldIdx].data(), sizeof(float) * dims);
+    }
+    pointsRead.clear();
+    auto adjacencySortDuration = duration_cast<milliseconds>(hclock::now() - startAdjacencySort).count();
+    std::cout << "adjacency sort time: " << adjacencySortDuration << std::endl;
+
+
 
     uint32_t iteration = 0;
     while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
         std::cout << "Iteration: " << iteration << std::endl;
+        auto startGroup = hclock::now();
+
+        uint32_t numHashFuncs = requiredHashFuncs(numPoints, 300);
+        std::vector<uint32_t> indices(numPoints);
+        std::iota(indices.begin(), indices.end(), 0);
+        vector<Range> ranges;
+        splitHorizontalThreadArray(200, numHashFuncs, numPoints, points, ranges, indices);
+
+        auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
+        groupingTime += groupDuration;
+
 
         auto startProcessing = hclock::now();
 
+        auto numThreads = std::thread::hardware_concurrency();
         vector<std::thread> threads;
         Task<Range> tasks(ranges);
         std::atomic<uint32_t> count = 0;
@@ -773,16 +748,8 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
         processGroupsTime += processingDuration;
 
         std::cout << "processing time: " << processingDuration << std::endl;
-
-        auto startGroup = hclock::now();
-        uint32_t numHashFuncs = requiredHashFuncs(numPoints, 300); // TODO try with smaller value (eg 100) once regroup is cheaper
-        ranges.clear();
-        std::iota(indices.begin(), indices.end(), 0);
-        splitHorizontalThreadArray(200, numHashFuncs, numPoints, points, ranges, indices);
-        auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
-        groupingTime += groupDuration;
-
         std::cout << "--------------------------------------------------------------------------------------------------------" << std::endl;
+
         iteration++;
     }
 
