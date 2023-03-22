@@ -58,7 +58,7 @@ pair<float, float> startBounds = {std::numeric_limits<float>::max(), std::numeri
  * https://www.youtube.com/watch?v=cn15P8vgB1A&ab_channel=RioICM2018
  */
 
-#define PRINT_OUTPUT
+//#define PRINT_OUTPUT
 
 
 uint64_t groupingTime = 0;
@@ -474,6 +474,16 @@ pair<float, float> getBounds(vector<vector<float>>& hashes, std::vector<uint32_t
     return {min, max};
 }
 
+uint32_t requiredHashFuncs4Split(uint32_t numPoints, uint32_t maxBucketSize) {
+    uint32_t groupSize = numPoints;
+    uint32_t numHashFuncs = 0;
+    while (groupSize > maxBucketSize) {
+        groupSize /= 4;
+        numHashFuncs++;
+    }
+    return numHashFuncs;
+}
+
 uint32_t requiredHashFuncs(uint32_t numPoints, uint32_t maxBucketSize) {
     uint32_t groupSize = numPoints;
     uint32_t numHashFuncs = 0;
@@ -729,6 +739,198 @@ void splitHorizontalMean(uint32_t numHashFuncs, uint32_t numPoints, float points
     std::cout << "histogram split time: " << duration_cast<milliseconds>(hclock::now() - startSplit).count() << '\n';
 #endif
 }
+
+pair<float, float> getBucketBounds(pair<float, float>& bounds, uint32_t numHistogramBuckets, uint32_t bucketId) {
+    auto& [min, max] = bounds;
+    float width = max - min;
+    float bucketWidth = width / numHistogramBuckets;
+    float bucketStart = bucketId * bucketWidth + min;
+    float bucketEnd = bucketStart + bucketWidth;
+    return {bucketStart, bucketEnd};
+}
+
+
+
+void splitHorizontalHistogram4way(uint32_t numHashFuncs, uint32_t numPoints, float points[][104], std::unordered_map<uint64_t, vector<uint32_t>>& globalGroups) {
+    auto startHash = hclock::now();
+
+    auto numThreads = std::thread::hardware_concurrency();
+    auto hashRanges = splitRange({0, numPoints}, numThreads);
+    vector<vector<float>> hashes(numPoints);
+
+    vector<Vec> unitVecs(numHashFuncs);
+    for (uint32_t h = 0; h < numHashFuncs; ++h) {
+        unitVecs[h] = randUniformUnitVec();
+    }
+    unitVecs = gramSchmidt(unitVecs);
+
+
+    vector<vector<pair<float, float>>> localBounds(numThreads);
+
+    // compute all hash function values
+    vector<std::thread> threads;
+    for (uint32_t t = 0; t < numThreads; ++t) {
+        threads.emplace_back([&, t]() {
+            auto& bounds = localBounds[t];
+            bounds.resize(numHashFuncs, startBounds);
+            auto range = hashRanges[t];
+            for (uint32_t i = range.first; i < range.second; ++i) {
+                const float* p = points[i];
+                vector<float>& hashSet = hashes[i];
+                for (uint32_t h = 0; h < numHashFuncs; ++h) {
+                    const auto& unitVec = unitVecs[h];
+                    float proj = dot(unitVec.data(), p);
+                    hashSet.push_back(proj);
+                    auto& [min, max] = bounds[h];
+                    min = std::min(min, proj);
+                    max = std::max(max, proj);
+                }
+            }
+        });
+    }
+    for (auto& thread: threads) { thread.join(); }
+
+
+#ifdef PRINT_OUTPUT
+    std::cout << "group hash time: " << duration_cast<milliseconds>(hclock::now() - startHash).count() << '\n';
+#endif
+    auto startSplit = hclock::now();
+
+    // merge threadlocal bounds
+    vector<pair<float, float>> globalBounds(numHashFuncs, startBounds);
+    for (auto& bounds : localBounds) {
+        for (uint32_t h = 0; h < numHashFuncs; ++h) {
+            auto& [minLocal, maxLocal] = bounds[h];
+            auto& [minGlobal, maxGlobal] = globalBounds[h];
+            minGlobal = std::min(minGlobal, minLocal);
+            maxGlobal = std::max(maxGlobal, maxLocal);
+        }
+    }
+
+    // compute local histograms
+    const uint32_t numHistogramBuckets = 100;
+    threads.clear();
+    vector<vector<vector<uint32_t>>> localHistograms(numThreads);
+    for (uint32_t t = 0; t < numThreads; ++t) {
+        threads.emplace_back([&, t]() {
+            auto& histos = localHistograms[t];
+            histos.resize(numHashFuncs);
+            for (uint32_t h = 0; h < numHashFuncs; ++h) {
+                histos[h].resize(numHistogramBuckets, 0);
+            }
+
+            auto range = hashRanges[t];
+            for (uint32_t i = range.first; i < range.second; ++i) {
+                vector<float>& hashSet = hashes[i];
+                for (uint32_t h = 0; h < numHashFuncs; ++h) {
+                    float proj = hashSet[h];
+                    auto& [min, max] = globalBounds[h];
+                    float width = max - min;
+                    float bucketWidth = width / numHistogramBuckets;
+                    auto bucket = std::min(static_cast<uint32_t>((proj - min) / bucketWidth), numHistogramBuckets - 1);
+                    histos[h][bucket] +=1;
+                }
+            }
+        });
+    }
+    for (auto& thread: threads) { thread.join(); }
+
+    // merge local histograms
+    vector<vector<uint32_t>> globalHistograms(numHashFuncs);
+    for (uint32_t h = 0; h < numHashFuncs; ++h) {
+        globalHistograms[h].resize(numHistogramBuckets, 0);
+    }
+    for (auto& histos: localHistograms) {
+        for (uint32_t h = 0; h < numHashFuncs; ++h) {
+            for (uint32_t b = 0; b < numHistogramBuckets; ++b) {
+                globalHistograms[h][b] += histos[h][b];
+            }
+        }
+    }
+
+    // compute quantile split points
+    vector<vector<float>> splitsBounds(numHashFuncs);
+    for (uint32_t h = 0; h < numHashFuncs; ++h) {
+        splitsBounds[h].resize(4-1);
+        uint32_t pointsSeen = 0;
+        bool q1 = false, q2=false, q3=false;
+        for (uint32_t b = 0; b < numHistogramBuckets; ++b) {
+            pointsSeen += globalHistograms[h][b];
+            // bucket contains median
+            if (!q1 && pointsSeen >= numPoints / 4) {
+                q1 = true;
+                auto [bucketStart, bucketEnd] = getBucketBounds(globalBounds[h], numHistogramBuckets, b);
+                std::uniform_real_distribution<float> distribution(bucketStart, bucketEnd);
+                splitsBounds[h].push_back(distribution(rd));
+            }
+            if (!q2 && pointsSeen >= numPoints / 2) {
+                q2 = true;
+                auto [bucketStart, bucketEnd] = getBucketBounds(globalBounds[h], numHistogramBuckets, b);
+                std::uniform_real_distribution<float> distribution(bucketStart, bucketEnd);
+                splitsBounds[h].push_back(distribution(rd));
+            }
+            if (!q3 && pointsSeen >= 3 * numPoints / 4) {
+                q3 = true;
+                auto [bucketStart, bucketEnd] = getBucketBounds(globalBounds[h], numHistogramBuckets, b);
+                std::uniform_real_distribution<float> distribution(bucketStart, bucketEnd);
+                splitsBounds[h].push_back(distribution(rd));
+            }
+        }
+    }
+
+    // aggregate based on splits into local maps
+    threads.clear();
+    vector<std::unordered_map<uint64_t, vector<uint32_t>>> localGroups(numThreads);
+    for (uint32_t t = 0; t < numThreads; ++t) {
+        threads.emplace_back([&, t]() {
+            auto& groups = localGroups[t];
+            auto range = hashRanges[t];
+            for (uint32_t i = range.first; i < range.second; ++i) {
+                vector<float>& hashSet = hashes[i];
+                uint64_t sig = 0;
+                for (uint32_t h = 0; h < numHashFuncs; ++h) {
+                    float proj = hashSet[h];
+                    vector<float> quantiles = splitsBounds[h];
+                    if (proj < quantiles[0]) {
+//                        sig |= 0;
+                    } else if (proj < quantiles[1]) {
+                        sig |= 1;
+                    } else if (proj < quantiles[2]) {
+                        sig |= 2;
+                    } else {
+                        sig |= 3;
+                    }
+                    sig <<= 2;
+                }
+
+                auto it = groups.find(sig);
+                if (it == groups.end()) {
+                    groups[sig] = {i};
+                } else {
+                    it->second.push_back(i);
+                }
+            }
+        });
+    }
+    for (auto& thread: threads) { thread.join(); }
+
+    for (unordered_map<uint64_t, vector<uint32_t>>& localGroupSet: localGroups) {
+        for (auto& [sig, group] : localGroupSet) {
+
+            auto it = globalGroups.find(sig);
+            if (it == globalGroups.end()) {
+                globalGroups[sig] = group;
+            } else {
+                auto& globalGroup = it->second;
+                globalGroup.insert(globalGroup.end(), group.begin(), group.end());
+            }
+        }
+    }
+#ifdef PRINT_OUTPUT
+    std::cout << "histogram split time: " << duration_cast<milliseconds>(hclock::now() - startSplit).count() << '\n';
+#endif
+}
+
 
 
 
