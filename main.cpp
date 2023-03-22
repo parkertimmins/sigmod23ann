@@ -21,7 +21,6 @@
 #include <boost/align/aligned_alloc.hpp>
 
 using std::cout;
-using std::endl;
 using std::string;
 using std::chrono::high_resolution_clock;
 using std::chrono::duration_cast;
@@ -551,7 +550,7 @@ void splitHorizontalUniformSample(uint32_t numHashFuncs, uint32_t numPoints, flo
     for (auto& thread: threads) { thread.join(); }
 
 
-    std::cout << "group hash time: " << duration_cast<milliseconds>(hclock::now() - startHash).count() << std::endl;
+    std::cout << "group hash time: " << duration_cast<milliseconds>(hclock::now() - startHash).count() << '\n';
     auto startSplit = hclock::now();
 
     // merge threadlocal bounds
@@ -611,7 +610,7 @@ void splitHorizontalUniformSample(uint32_t numHashFuncs, uint32_t numPoints, flo
             }
         }
     }
-    std::cout << "histogram split time: " << duration_cast<milliseconds>(hclock::now() - startSplit).count() << std::endl;
+    std::cout << "histogram split time: " << duration_cast<milliseconds>(hclock::now() - startSplit).count() << '\n';
 }
 
 
@@ -657,8 +656,8 @@ void splitHorizontalMean(uint32_t numHashFuncs, uint32_t numPoints, float points
     for (auto& thread: threads) { thread.join(); }
 
 
-    std::cout << "group hash time: " << duration_cast<milliseconds>(hclock::now() - startHash).count() << std::endl;
     auto startSplit = hclock::now();
+    std::cout << "group hash time: " << duration_cast<milliseconds>(startSplit - startHash).count() << '\n';
 
     // merge threadlocal bounds
     vector<pair<float, float>> globalBounds(numHashFuncs, startBounds);
@@ -705,7 +704,6 @@ void splitHorizontalMean(uint32_t numHashFuncs, uint32_t numPoints, float points
     }
     for (auto& thread: threads) { thread.join(); }
 
-
     for (unordered_map<uint64_t, vector<uint32_t>>& localGroupSet: localGroups) {
         for (auto& [sig, group] : localGroupSet) {
 
@@ -718,7 +716,7 @@ void splitHorizontalMean(uint32_t numHashFuncs, uint32_t numPoints, float points
             }
         }
     }
-    std::cout << "histogram split time: " << duration_cast<milliseconds>(hclock::now() - startSplit).count() << std::endl;
+    std::cout << "histogram split time: " << duration_cast<milliseconds>(hclock::now() - startSplit).count() << '\n';
 }
 
 
@@ -764,7 +762,7 @@ void splitHorizontalHistogram(uint32_t numHashFuncs, uint32_t numPoints, float p
     for (auto& thread: threads) { thread.join(); }
 
 
-    std::cout << "group hash time: " << duration_cast<milliseconds>(hclock::now() - startHash).count() << std::endl;
+    std::cout << "group hash time: " << duration_cast<milliseconds>(hclock::now() - startHash).count() << '\n';
     auto startSplit = hclock::now();
 
     // merge threadlocal bounds
@@ -883,7 +881,7 @@ void splitHorizontalHistogram(uint32_t numHashFuncs, uint32_t numPoints, float p
             }
         }
     }
-    std::cout << "histogram split time: " << duration_cast<milliseconds>(hclock::now() - startSplit).count() << std::endl;
+    std::cout << "histogram split time: " << duration_cast<milliseconds>(hclock::now() - startSplit).count() << '\n';
 }
 
 
@@ -919,7 +917,7 @@ void splitHorizontalThreadArray(uint32_t maxGroupSize, uint32_t numHashFuncs, ui
     }
     for (auto& thread: threads) { thread.join(); }
 
-    std::cout << "group hash time: " << duration_cast<milliseconds>(hclock::now() - startHash).count() << std::endl;
+    std::cout << "group hash time: " << duration_cast<milliseconds>(hclock::now() - startHash).count() << '\n';
 
     auto startRegroup = hclock::now();
 
@@ -972,8 +970,8 @@ void splitHorizontalThreadArray(uint32_t maxGroupSize, uint32_t numHashFuncs, ui
     }
     for (auto& thread: threads) { thread.join(); }
 
-    std::cout << "group regroup time: " << duration_cast<milliseconds>(hclock::now() - startRegroup).count() << std::endl;
-    std::cout << "group regroup maximum group size: " << actualMaxGroupsSize << std::endl;
+    std::cout << "group regroup time: " << duration_cast<milliseconds>(hclock::now() - startRegroup).count() << '\n';
+    std::cout << "group regroup maximum group size: " << actualMaxGroupsSize << '\n';
 }
 
 
@@ -1010,7 +1008,7 @@ void splitHorizontalThreadVector(uint32_t maxGroupSize, uint32_t numHashFuncs, c
     }
     for (auto& thread: threads) { thread.join(); }
 
-    std::cout << "group hash time: " << duration_cast<milliseconds>(hclock::now() - startHash).count() << std::endl;
+    std::cout << "group hash time: " << duration_cast<milliseconds>(hclock::now() - startHash).count() << '\n';
 
     auto startRegroup = hclock::now();
 
@@ -1060,7 +1058,7 @@ void splitHorizontalThreadVector(uint32_t maxGroupSize, uint32_t numHashFuncs, c
     }
     for (auto& thread: threads) { thread.join(); }
 
-    std::cout << "group regroup time: " << duration_cast<milliseconds>(hclock::now() - startRegroup).count() << std::endl;
+    std::cout << "group regroup time: " << duration_cast<milliseconds>(hclock::now() - startRegroup).count() << '\n';
 }
 
 void splitSortForAdjacency(vector<Vec>& pointsRead, std::vector<uint32_t>& newToOldIndices, float points[][104], uint32_t numThreads, uint32_t numPoints, vector<Range>& ranges) {
@@ -1082,7 +1080,7 @@ void splitSortForAdjacency(vector<Vec>& pointsRead, std::vector<uint32_t>& newTo
 
     pointsRead.clear();
     auto adjacencySortDuration = duration_cast<milliseconds>(hclock::now() - startAdjacencySort).count();
-    std::cout << "adjacency sort time: " << adjacencySortDuration << std::endl;
+    std::cout << "adjacency sort time: " << adjacencySortDuration << '\n';
 }
 
 
@@ -1105,7 +1103,7 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
         timeBoundsMs = pointsRead.size() == 10'000 ? 20'000 : 1'600'000;
     }
 
-    std::cout << "start run with time bound: " << timeBoundsMs << std::endl;
+    std::cout << "start run with time bound: " << timeBoundsMs << '\n';
 
     auto startTime = hclock::now();
     vector<KnnSetScannable> idToKnn(pointsRead.size());
@@ -1117,15 +1115,15 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
     std::vector<uint32_t> newToOldIndices(numPoints);
     float (*points)[104] = reinterpret_cast<float(*)[104]>(new __m256[(numPoints * 104 * sizeof(float)) / sizeof(__m256)]);
     splitSortForAdjacency(pointsRead, newToOldIndices, points, numThreads, numPoints, ranges);
+    uint32_t numHashFuncs = requiredHashFuncs(numPoints, 300);
 
     uint32_t iteration = 0;
     while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
-        std::cout << "Iteration: " << iteration << std::endl;
+        std::cout << "Iteration: " << iteration << '\n';
 
 
-        auto startGroup = hclock::now();
-        uint32_t numHashFuncs = requiredHashFuncs(numPoints, 300);
         std::unordered_map<uint64_t, vector<uint32_t>> globalGroups;
+        auto startGroup = hclock::now();
         splitHorizontalMean(numHashFuncs, numPoints, points, globalGroups);
         auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
         groupingTime += groupDuration;
@@ -1133,7 +1131,6 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
         auto startProcessing = hclock::now();
 
         vector<std::thread> threads;
-        std::mutex groupMtx;
         std::atomic<uint32_t> count = 0;
 
         auto signatures = getKeys(globalGroups);
@@ -1158,10 +1155,9 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
         auto processingDuration = duration_cast<milliseconds>(hclock::now() - startProcessing).count();
         processGroupsTime += processingDuration;
 
-        std::cout << "processing time: " << processingDuration << std::endl;
+        std::cout << "processing time: " << processingDuration << '\n';
 
-
-        std::cout << "--------------------------------------------------------------------------------------------------------" << std::endl;
+        std::cout << "--------------------------------------------------------------------------------------------------------\n";
         iteration++;
     }
 
@@ -1173,21 +1169,18 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
         result[newToOldIndices[id]] = std::move(newIdxResultRow);
     }
 
-//    for (uint32_t id = 0; id < points.size(); ++id) {
-//        result[id] = idToKnn[id].finalize();
-//    }
-
     auto sizes = padResult(numPoints, result);
     for (uint32_t i=0; i < sizes.size(); ++i) {
-        std::cout << "size: " << i << ", count: " << sizes[i] << std::endl;
+        std::cout << "size: " << i << ", count: " << sizes[i] << '\n';
     }
 
-    std::cout << "total grouping time (ms): " << groupingTime << std::endl;
-    std::cout << "total processing time (ms): " << processGroupsTime << std::endl;
+    std::cout << "total grouping time (ms): " << groupingTime << '\n';
+    std::cout << "total processing time (ms): " << processGroupsTime << '\n';
 
 }
 
 int main(int argc, char **argv) {
+  std::ios::sync_with_stdio(false);
   auto startTime = hclock::now();
 
   string source_path = "dummy-data.bin";
@@ -1202,7 +1195,7 @@ int main(int argc, char **argv) {
 
   auto startRead = hclock::now();
   ReadBin(source_path, nodes);
-  std::cout << "read time: " << duration_cast<milliseconds>(hclock::now() - startRead).count() << std::endl;
+  std::cout << "read time: " << duration_cast<milliseconds>(hclock::now() - startRead).count() << '\n';
 
   // Knng constuction
   vector<vector<uint32_t>> knng(nodes.size());
@@ -1211,10 +1204,10 @@ int main(int argc, char **argv) {
   // Save to ouput.bin
   auto startSave = hclock::now();
   SaveKNNG(knng);
-  std::cout << "save time: " << duration_cast<milliseconds>(hclock::now() - startSave).count() << std::endl;
+  std::cout << "save time: " << duration_cast<milliseconds>(hclock::now() - startSave).count() << '\n';
 
   auto totalDuration = duration_cast<milliseconds>(hclock::now() - startTime).count();
-  std::cout << "total time (ms): " << totalDuration << std::endl;
+  std::cout << "total time (ms): " << totalDuration << '\n';
   return 0;
 }
 
