@@ -1116,7 +1116,7 @@ void splitKnn(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints,
         threads.emplace_back([&]() {
             while (count < numPoints) {
                 stack_mtx.lock();
-                if (stack.empty()) size 500, 10 iterations{
+                if (stack.empty()) {
                     stack_mtx.unlock();
                 } else {
                     auto range = stack.back(); stack.pop_back();
