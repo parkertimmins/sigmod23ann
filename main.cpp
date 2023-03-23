@@ -1116,7 +1116,7 @@ void splitKnn(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints,
         threads.emplace_back([&]() {
             while (count < numPoints) {
                 stack_mtx.lock();
-                if (stack.empty()) {
+                if (stack.empty()) size 500, 10 iterations{
                     stack_mtx.unlock();
                 } else {
                     auto range = stack.back(); stack.pop_back();
@@ -1482,7 +1482,7 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
 #endif
         auto startGroup = hclock::now();
 
-        splitKnn(1, 500, numPoints, points, ranges, indices);
+        splitKnn(1, 200, numPoints, points, ranges, indices);
         auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
         groupingTime += groupDuration;
 
