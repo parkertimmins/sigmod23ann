@@ -1104,7 +1104,7 @@ void splitHorizontalHistogram(uint32_t numHashFuncs, uint32_t numPoints, float p
 void splitKnn(uint32_t maxGroupSize, uint32_t numPoints, float points[][104], vector<Range>& ranges, vector<uint32_t>& indices) {
 
     auto startKnn = hclock::now();
-    uint32_t knnIterations = 20;
+    uint32_t knnIterations = 5;
     uint32_t branchingFactor = 2;
     auto numThreads = std::thread::hardware_concurrency();
 
