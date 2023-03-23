@@ -1104,7 +1104,7 @@ void splitHorizontalHistogram(uint32_t numHashFuncs, uint32_t numPoints, float p
 void splitKnn(uint32_t maxGroupSize, uint32_t numPoints, float points[][104], vector<Range>& ranges, vector<uint32_t>& indices) {
 
     auto startKnn = hclock::now();
-    uint32_t knnIterations = 5;
+    uint32_t knnIterations = 0;
     uint32_t branchingFactor = 2;
     auto numThreads = std::thread::hardware_concurrency();
 
@@ -1121,7 +1121,9 @@ void splitKnn(uint32_t maxGroupSize, uint32_t numPoints, float points[][104], ve
         threads.emplace_back([&]() {
             while (count < numPoints) {
                 stack_mtx.lock();
-                if (!stack.empty()) {
+                if (stack.empty()) {
+                    stack_mtx.unlock();
+                } else {
                     auto range = stack.back(); stack.pop_back();
                     stack_mtx.unlock();
                     uint32_t rangeSize = range.second - range.first;
@@ -1139,7 +1141,8 @@ void splitKnn(uint32_t maxGroupSize, uint32_t numPoints, float points[][104], ve
                         while (centerIds.size() < branchingFactor) {
                             centerIds.insert(distribution(rd));
                         }
-                        // get points values
+
+                        // copy points into Vec objects
                         vector<Vec> centers(centerIds.size());
                         uint32_t c = 0;
                         for (auto id : centerIds) {
@@ -1206,7 +1209,7 @@ void splitKnn(uint32_t maxGroupSize, uint32_t numPoints, float points[][104], ve
                             groups[minDistCenterIdx].push_back(id);
                         }
 
-
+                        // build ranges
                         vector<Range> subRanges;
                         uint32_t start = range.first;
                         for (auto& group : groups) {
@@ -1222,8 +1225,6 @@ void splitKnn(uint32_t maxGroupSize, uint32_t numPoints, float points[][104], ve
                             stack.insert(stack.end(), subRanges.begin(), subRanges.end());
                         }
                     }
-                } else {
-                    stack_mtx.unlock();
                 }
             }
 
