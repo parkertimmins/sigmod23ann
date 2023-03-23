@@ -18,7 +18,6 @@
 #include "io.h"
 #include <emmintrin.h>
 #include <immintrin.h>
-#include <boost/align/aligned_alloc.hpp>
 
 using std::cout;
 using std::string;
@@ -34,7 +33,6 @@ using std::pair;
 using std::vector;
 using Range = pair<uint32_t, uint32_t>;
 pair<float, float> startBounds = {std::numeric_limits<float>::max(), std::numeric_limits<float>::min()};
-
 
 
 /**
@@ -195,8 +193,6 @@ Vec scalarMult(float c, const Vec& vec) {
     }
     return res;
 }
-
-
 
 float dot128(const float* lhs, const float* rhs) {
     __m128 sum  = _mm_set1_ps(0);
@@ -1101,10 +1097,9 @@ void splitHorizontalHistogram(uint32_t numHashFuncs, uint32_t numPoints, float p
 #endif
 }
 
-void splitKnn(uint32_t maxGroupSize, uint32_t numPoints, float points[][104], vector<Range>& ranges, vector<uint32_t>& indices) {
+void splitKnn(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints, float points[][104], vector<Range>& ranges, vector<uint32_t>& indices) {
 
     auto startKnn = hclock::now();
-    uint32_t knnIterations = 3;
     uint32_t branchingFactor = 2;
     auto numThreads = std::thread::hardware_concurrency();
 
@@ -1480,14 +1475,14 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
     std::vector<uint32_t> indices = newToOldIndices;
 
     uint32_t iteration = 0;
-    while (iteration < 2) {
+    while (iteration < 10) {
 //    while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
 #ifdef PRINT_OUTPUT
         std::cout << "Iteration: " << iteration << '\n';
 #endif
         auto startGroup = hclock::now();
 
-        splitKnn(1000, numPoints, points, ranges, indices);
+        splitKnn(1, 500, numPoints, points, ranges, indices);
         auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
         groupingTime += groupDuration;
 
