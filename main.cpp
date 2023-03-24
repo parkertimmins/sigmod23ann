@@ -1237,7 +1237,7 @@ void splitKmeans(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoin
 }
 
 
-void splitKmeansBinaryAdjacency(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints, vector<Vec> points, vector<Range>& ranges, vector<uint32_t>& indices) {
+void splitKmeansBinaryAdjacency(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints, vector<Vec>& points, vector<Range>& ranges, vector<uint32_t>& indices) {
 
     auto startKnn = hclock::now();
     auto numThreads = std::thread::hardware_concurrency();
@@ -1281,8 +1281,11 @@ void splitKmeansBinaryAdjacency(uint32_t knnIterations, uint32_t maxGroupSize, u
                         // copy points into Vec objects
                         Vec center1(dims);
                         Vec center2(dims);
-                        std::memcpy(center1.data(), points.data() + c1, dims * sizeof(float));
-                        std::memcpy(center2.data(), points.data() + c2, dims * sizeof(float));
+
+                        for (uint32_t i = 0; i < dims; ++i) {
+                            center1[i]  = points[c1][i];
+                            center2[i]  = points[c2][i];
+                        }
 
                         for (auto iteration = 0; iteration < knnIterations; ++iteration) {
                             vector<double> sumsGroups1(dims, 0);
@@ -1413,8 +1416,12 @@ void splitKmeansBinary(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t n
                         // copy points into Vec objects
                         Vec center1(dims);
                         Vec center2(dims);
-                        std::memcpy(center1.data(), points[c1], dims * sizeof(float));
-                        std::memcpy(center2.data(), points[c2], dims * sizeof(float));
+
+                        // TODO use copy as memcpy not safe
+                        for (uint32_t i = 0; i < dims; ++i) {
+                            center1[i]  = points[c1][i];
+                            center2[i]  = points[c2][i];
+                        }
 
                         for (auto iteration = 0; iteration < knnIterations; ++iteration) {
                             vector<double> sumsGroups1(dims, 0);
