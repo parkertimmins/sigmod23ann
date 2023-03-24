@@ -1097,7 +1097,8 @@ void splitHorizontalHistogram(uint32_t numHashFuncs, uint32_t numPoints, float p
 #endif
 }
 
-void splitKnn(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints, float points[][104], vector<Range>& ranges, vector<uint32_t>& indices) {
+
+void splitKmeans(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints, float points[][104], vector<Range>& ranges, vector<uint32_t>& indices) {
 
     auto startKnn = hclock::now();
     uint32_t branchingFactor = 2;
@@ -1208,6 +1209,9 @@ void splitKnn(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints,
                         vector<Range> subRanges;
                         uint32_t start = range.first;
                         for (auto& group : groups) {
+                            if (group.empty()) {
+                                continue;
+                            }
                             uint32_t end = start + group.size();
                             subRanges.emplace_back(start, end);
                             for (uint32_t i = 0; i < group.size(); ++i) {
@@ -1218,6 +1222,137 @@ void splitKnn(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints,
                         {
                             std::lock_guard<std::mutex> guard(stack_mtx);
                             stack.insert(stack.end(), subRanges.begin(), subRanges.end());
+                        }
+                    }
+                }
+            }
+
+        });
+    }
+    for (auto& thread: threads) { thread.join(); }
+
+#ifdef PRINT_OUTPUT
+    std::cout << "group knn time: " << duration_cast<milliseconds>(hclock::now() - startKnn).count() << '\n';
+#endif
+}
+
+void splitKmeansBinary(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints, float points[][104], vector<Range>& ranges, vector<uint32_t>& indices) {
+
+    auto startKnn = hclock::now();
+    auto numThreads = std::thread::hardware_concurrency();
+
+    vector<std::thread> threads;
+
+    // ranges are within the indices array, which contains ids
+    vector<Range> stack;
+    stack.emplace_back(make_pair(0, numPoints));
+    std::mutex stack_mtx;
+    std::mutex groups_mtx;
+
+    std::atomic<uint32_t> count = 0;
+    for (uint32_t t = 0; t < numThreads; ++t) {
+        threads.emplace_back([&]() {
+            while (count < numPoints) {
+                stack_mtx.lock();
+                if (stack.empty()) {
+                    stack_mtx.unlock();
+                } else {
+                    auto range = stack.back(); stack.pop_back();
+                    stack_mtx.unlock();
+                    uint32_t rangeSize = range.second - range.first;
+
+                    if (rangeSize < maxGroupSize) {
+                        count += rangeSize;
+                        std::lock_guard<std::mutex> guard(groups_mtx);
+                        ranges.push_back(range);
+                    } else {
+                        // knn splits
+
+                        begin_kmeans:
+                        // pick 2 point ids
+                        std::uniform_int_distribution<uint32_t> distribution(range.first, range.second-1);
+                        uint32_t c1 = distribution(rd);
+                        uint32_t c2 = distribution(rd);
+                        while (c1 == c2) {
+                            c2 = distribution(rd);
+                        }
+
+                        // copy points into Vec objects
+                        Vec center1(dims);
+                        Vec center2(dims);
+                        std::memcpy(center1.data(), points[c1], dims * sizeof(float));
+                        std::memcpy(center2.data(), points[c2], dims * sizeof(float));
+
+                        for (auto iteration = 0; iteration < knnIterations; ++iteration) {
+                            vector<double> sumsGroups1(dims, 0);
+                            vector<double> sumsGroups2(dims, 0);
+                            uint32_t group1Size = 0;
+                            uint32_t group2Size = 0;
+
+                            // measure distance from all points in group to each of the 2 points
+                            for (uint32_t i = range.first; i < range.second; ++i) {
+
+                                auto id = indices[i];
+                                auto& pt = points[id];
+                                float dist1 = distance(pt, center1.data());
+                                float dist2 = distance(pt, center2.data());
+
+                                if (dist1 < dist2) {
+                                    group1Size++;
+                                    for (uint32_t j = 0; j < dims; ++j) {
+                                        sumsGroups1[j] += pt[j];
+                                    }
+                                } else {
+                                    group2Size++;
+                                    for (uint32_t j = 0; j < dims; ++j) {
+                                        sumsGroups2[j] += pt[j];
+                                    }
+                                }
+                            }
+
+                            if (group1Size == 0 || group2Size == 0) {
+                                goto begin_kmeans;
+                            }
+
+                            // recompute centers based on averages
+                            for (uint32_t i = 0; i < dims; ++i) {
+                                center1[i] = sumsGroups1[i] / group1Size;
+                                center2[i] = sumsGroups2[i] / group2Size;
+                            }
+                        }
+
+                        // compute final groups
+                        vector<uint32_t> group1;
+                        vector<uint32_t> group2;
+                        for (uint32_t i = range.first; i < range.second; ++i) {
+                            auto id = indices[i];
+                            auto& pt = points[id];
+                            float dist1 = distance(pt, center1.data());
+                            float dist2 = distance(pt, center2.data());
+
+                            if (dist1 < dist2) {
+                                group1.push_back(id);
+                            } else {
+                                group2.push_back(id);
+                            }
+                        }
+
+                        if (group1.empty() || group2.empty()) {
+                            goto begin_kmeans;
+                        }
+
+
+                        // build ranges
+                        uint32_t subRange1Start = range.first;
+                        uint32_t subRange2Start = range.first + group1.size();
+                        Range subRange1 = {subRange1Start, subRange1Start + group1.size()};
+                        Range subRange2 = {subRange2Start, subRange2Start + group2.size()};
+                        std::memcpy(indices.data() + subRange1Start, group1.data(), group1.size() * sizeof(uint32_t));
+                        std::memcpy(indices.data() + subRange2Start, group2.data(), group2.size() * sizeof(uint32_t));
+                        {
+                            std::lock_guard<std::mutex> guard(stack_mtx);
+                            stack.push_back(subRange1);
+                            stack.push_back(subRange2);
                         }
                     }
                 }
@@ -1482,7 +1617,7 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
 #endif
         auto startGroup = hclock::now();
 
-        splitKnn(1, 200, numPoints, points, ranges, indices);
+        splitKmeansBinary(1, 200, numPoints, points, ranges, indices);
         auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
         groupingTime += groupDuration;
 
