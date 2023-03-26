@@ -1741,7 +1741,7 @@ void splitSortForAdjacency(vector<Vec>& pointsRead, std::vector<uint32_t>& newTo
 void splitSortKnnForAdjacency(vector<Vec>& pointsRead, std::vector<uint32_t>& newToOldIndices, float points[][104], uint32_t numThreads, uint32_t numPoints, vector<Range>& ranges) {
     auto startAdjacencySort = hclock::now();
     std::iota(newToOldIndices.begin(), newToOldIndices.end(), 0);
-    splitKmeansBinaryAdjacency(1, 400, numPoints, pointsRead, ranges, newToOldIndices);
+    splitKmeansBinaryAdjacency(1, 1000, numPoints, pointsRead, ranges, newToOldIndices);
     vector<Range> moveRanges = splitRange({0, numPoints}, numThreads);
     vector<std::thread> threads;
     for (uint32_t t = 0; t < numThreads; ++t) {
@@ -1808,7 +1808,7 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
 
         if (!first) {
             auto startGroup = hclock::now();
-            splitKmeansBinary(1, 400, numPoints, points, ranges, indices);
+            splitKmeansBinary(1, 1000, numPoints, points, ranges, indices);
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
             groupingTime += groupDuration;
         }
