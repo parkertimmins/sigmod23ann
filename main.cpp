@@ -1389,11 +1389,11 @@ void splitKmeansBinaryAdjacency(uint32_t knnIterations, uint32_t maxGroupSize, u
 #endif
 }
 
-//
+
 //void splitKmeansBinaryParalellRec(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints, float points[][104], vector<Range>& ranges, std::mutex groups_mtx, vector<uint32_t>& indices) {
 //    auto startKnn = hclock::now();
 //
-//     vector<Range> stack;
+//    vector<Range> stack;
 //    stack.emplace_back(make_pair(0, numPoints));
 //    std::mutex stack_mtx;
 //    std::mutex groups_mtx;
@@ -1940,7 +1940,7 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
     if(getenv("LOCAL_RUN")) {
         timeBoundsMs = 60'000;
     } else {
-        timeBoundsMs = pointsRead.size() == 10'000 ? 20'000 : 1'400'000;
+        timeBoundsMs = pointsRead.size() == 10'000 ? 20'000 : 1'650'000;
     }
 
 #ifdef PRINT_OUTPUT
