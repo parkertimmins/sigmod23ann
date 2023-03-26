@@ -177,6 +177,17 @@ Vec randUniformUnitVec(size_t dim=dims) {
     return randVec;
 }
 
+
+Vec add(const Vec& lhs, const Vec& rhs) {
+    auto dim = lhs.size();
+    Vec result(dim);
+    for (uint32_t i = 0; i < dim; i++) {
+        result[i]  = lhs[i] + rhs[i];
+    }
+    return result;
+}
+
+
 Vec sub(const Vec& lhs, const Vec& rhs) {
     auto dim = lhs.size();
     Vec result(dim);
@@ -1287,7 +1298,13 @@ void splitKmeansBinaryAdjacency(uint32_t knnIterations, uint32_t maxGroupSize, u
                             center2[i]  = points[c2][i];
                         }
 
+
                         for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
+                            auto between = scalarMult(0.5, add(center1, center2));
+                            auto coefs = sub(center1, between);
+                            auto offset = dot(between.data(), coefs.data());
+                            // dot(x, coefs) >= offset means nearer to center1
+
                             vector<double> sumsGroups1(dims, 0);
                             vector<double> sumsGroups2(dims, 0);
                             uint32_t group1Size = 0;
@@ -1298,10 +1315,8 @@ void splitKmeansBinaryAdjacency(uint32_t knnIterations, uint32_t maxGroupSize, u
 
                                 auto id = indices[i];
                                 auto& pt = points[id];
-                                float dist1 = distance(pt.data(), center1.data());
-                                float dist2 = distance(pt.data(), center2.data());
-
-                                if (dist1 < dist2) {
+                                bool nearerCenter1 = dot(coefs.data(), pt.data()) >= offset;
+                                if (nearerCenter1) {
                                     group1Size++;
                                     for (uint32_t j = 0; j < dims; ++j) {
                                         sumsGroups1[j] += pt[j];
@@ -1325,16 +1340,19 @@ void splitKmeansBinaryAdjacency(uint32_t knnIterations, uint32_t maxGroupSize, u
                             }
                         }
 
+                        auto between = scalarMult(0.5, add(center1, center2));
+                        auto coefs = sub(center1, between);
+                        auto offset = dot(between.data(), coefs.data());
+                        // dot(x, coefs) >= offset means nearer to center1
                         // compute final groups
                         vector<uint32_t> group1;
                         vector<uint32_t> group2;
                         for (uint32_t i = range.first; i < range.second; ++i) {
+
                             auto id = indices[i];
                             auto& pt = points[id];
-                            float dist1 = distance(pt.data(), center1.data());
-                            float dist2 = distance(pt.data(), center2.data());
-
-                            if (dist1 < dist2) {
+                            bool nearerCenter1 = dot(coefs.data(), pt.data()) >= offset;
+                            if (nearerCenter1) {
                                 group1.push_back(id);
                             } else {
                                 group2.push_back(id);
@@ -1424,6 +1442,11 @@ void splitKmeansBinary(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t n
                         }
 
                         for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
+                            auto between = scalarMult(0.5, add(center1, center2));
+                            auto coefs = sub(center1, between);
+                            auto offset = dot(between.data(), coefs.data());
+                            // dot(x, coefs) >= offset means nearer to center1
+
                             vector<double> sumsGroups1(dims, 0);
                             vector<double> sumsGroups2(dims, 0);
                             uint32_t group1Size = 0;
@@ -1434,10 +1457,9 @@ void splitKmeansBinary(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t n
 
                                 auto id = indices[i];
                                 auto& pt = points[id];
-                                float dist1 = distance(pt, center1.data());
-                                float dist2 = distance(pt, center2.data());
 
-                                if (dist1 < dist2) {
+                                bool nearerCenter1 = dot(coefs.data(), pt) >= offset;
+                                if (nearerCenter1) {
                                     group1Size++;
                                     for (uint32_t j = 0; j < dims; ++j) {
                                         sumsGroups1[j] += pt[j];
@@ -1462,15 +1484,16 @@ void splitKmeansBinary(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t n
                         }
 
                         // compute final groups
+                        auto between = scalarMult(0.5, add(center1, center2));
+                        auto coefs = sub(center1, between);
+                        auto offset = dot(between.data(), coefs.data());
                         vector<uint32_t> group1;
                         vector<uint32_t> group2;
                         for (uint32_t i = range.first; i < range.second; ++i) {
                             auto id = indices[i];
                             auto& pt = points[id];
-                            float dist1 = distance(pt, center1.data());
-                            float dist2 = distance(pt, center2.data());
-
-                            if (dist1 < dist2) {
+                            bool nearerCenter1 = dot(coefs.data(), pt) >= offset;
+                            if (nearerCenter1) {
                                 group1.push_back(id);
                             } else {
                                 group2.push_back(id);
