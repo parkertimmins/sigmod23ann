@@ -15,9 +15,13 @@
 #include <mutex>
 #include <limits>
 #include <cstring>
+#include <deque>
 #include "io.h"
 #include <emmintrin.h>
 #include <immintrin.h>
+#include <oneapi/tbb/concurrent_vector.h>
+#include "oneapi/tbb.h"
+
 
 using std::cout;
 using std::string;
@@ -1248,7 +1252,7 @@ void splitKmeans(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoin
 }
 
 
-void splitKmeansBinaryAdjacency(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints, vector<Vec>& points, vector<Range>& ranges, vector<uint32_t>& indices) {
+void splitKmeansBinaryAdjacency(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints, vector<Vec>& points, tbb::concurrent_vector<Range>& ranges, vector<uint32_t>& indices) {
 
     auto startKnn = hclock::now();
     auto numThreads = std::thread::hardware_concurrency();
@@ -1390,163 +1394,133 @@ void splitKmeansBinaryAdjacency(uint32_t knnIterations, uint32_t maxGroupSize, u
 }
 
 
-//void splitKmeansBinaryParalellRec(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints, float points[][104], vector<Range>& ranges, std::mutex groups_mtx, vector<uint32_t>& indices) {
-//    auto startKnn = hclock::now();
-//
-//    vector<Range> stack;
-//    stack.emplace_back(make_pair(0, numPoints));
-//    std::mutex stack_mtx;
-//    std::mutex groups_mtx;
-//
-//    std::atomic<uint32_t> count = 0;
-//
-//
-//    uint32_t rangeSize = range.second - range.first;
-//    if (rangeSize < maxGroupSize) {
-//        std::lock_guard<std::mutex> guard(groups_mtx);
-//        ranges.push_back(range);
-//    } else {
-//        begin_kmeans:
-//        //
-//        std::uniform_int_distribution<uint32_t> distribution(range.first, range.second-1);
-//        uint32_t c1 = distribution(rd);
-//        uint32_t c2 = distribution(rd);
-//        while (c1 == c2) { c2 = distribution(rd); }
-//
-//        // copy points into Vec objects
-//        Vec center1(dims);
-//        Vec center2(dims);
-//        // TODO use copy as memcpy not safe
-//        for (uint32_t i = 0; i < dims; ++i) {
-//            center1[i]  = points[c1][i];
-//            center2[i]  = points[c2][i];
-//        }
-//
-//        for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
-//            auto between = scalarMult(0.5, add(center1, center2));
-//            auto coefs = sub(center1, between);
-//            auto offset = dot(between.data(), coefs.data());
-//            // dot(x, coefs) >= offset means nearer to center1
-//
-//
-//            vector<vector<double>> localSumGroup1s(numThreads);
-//            vector<vector<double>> localSumGroup2s(numThreads);
-//            vector<uint32_t> localGroup1Sizes(numThreads, 0);
-//            vector<uint32_t> localGroup2Sizes(numThreads, 0);
-//
-//            vector<Range> localRanges = splitRange(range, numThreads);
-//            vector<std::thread> threads;
-//            for (uint32_t t = 0; t < numThreads; ++t) {
-//                threads.emplace_back([&, t]() {
-//                    auto& sumG1 = localSumGroup1s[t];
-//                    auto& sumG2 = localSumGroup2s[t];
-//                    auto& countG1 = localGroup1Sizes[t];
-//                    auto& countG2 = localGroup2Sizes[t];
-//                    sumG1.resize(dims);
-//                    sumG2.resize(dims);
-//                    auto r = localRanges[t];
-//
-//                    for (uint32_t i = r.first; i < r.second; ++i) {
-//                        auto id = indices[i];
-//                        auto& pt = points[id];
-//                        bool nearerCenter1 = dot(coefs.data(), pt) >= offset;
-//                        if (nearerCenter1) {
-//                            countG1++;
-//                            for (uint32_t j = 0; j < dims; ++j) { sumG1[j] += pt[j]; }
-//                        } else {
-//                            countG2++;
-//                            for (uint32_t j = 0; j < dims; ++j) { sumG2[j] += pt[j]; }
-//                        }
-//                    }
-//                });
-//            }
-//            for (auto& thread: threads) { thread.join(); }
-//
-//            // merge into global
-//            vector<double> sumsGroups1(dims, 0);
-//            vector<double> sumsGroups2(dims, 0);
-//            uint32_t group1Size = 0;
-//            uint32_t group2Size = 0;
-//            for (uint32_t t = 0; t < numThreads; ++t) {
-//                group1Size += localGroup1Sizes[t];
-//                group2Size += localGroup2Sizes[t];
-//                for (uint32_t j = 0; j < dims; ++j) {
-//                    sumsGroups1[j] += localSumGroup1s[t][j];
-//                    sumsGroups2[j] += localSumGroup2s[t][j];
-//                }
-//            }
-//
-//            if (group1Size == 0 || group2Size == 0) {
-//                goto begin_kmeans;
-//            }
-//
-//            // recompute centers based on averages
-//            for (uint32_t i = 0; i < dims; ++i) {
-//                center1[i] = sumsGroups1[i] / group1Size;
-//                center2[i] = sumsGroups2[i] / group2Size;
-//            }
-//        }
-//
-//        // compute final groups
-//        auto between = scalarMult(0.5, add(center1, center2));
-//        auto coefs = sub(center1, between);
-//        auto offset = dot(between.data(), coefs.data());
-//        vector<vector<uint32_t>> group1s;
-//        vector<vector<uint32_t>> group2s;
-//        vector<Range> localRanges = splitRange(range, numThreads);
-//        vector<std::thread> threads;
-//        for (uint32_t t = 0; t < numThreads; ++t) {
-//            threads.emplace_back([&, t]() {
-//                auto r = localRanges[t];
-//                for (uint32_t i = r.first; i < r.second; ++i) {
-//                    auto id = indices[i];
-//                    auto& pt = points[id];
-//                    bool nearerCenter1 = dot(coefs.data(), pt) >= offset;
-//                    if (nearerCenter1) {
-//                        group1s[t].push_back(id);
-//                    } else {
-//                        group2s[t].push_back(id);
-//                    }
-//                }
-//            });
-//        }
-//        for (auto& thread: threads) { thread.join(); }
-//
-//
-//        uint32_t g1Size = 0;
-//        uint32_t g2Size= 0;
-//        for (auto& g : group1s) { g1Size += g.size(); }
-//        for (auto& g : group2s) { g2Size += g.size(); }
-//        if (g1Size == 0 || g2Size == 0) {
-//            goto begin_kmeans;
-//        }
-//
-//        // build ranges
-//        uint32_t subRange1Start = range.first;
-//        uint32_t subRange2Start = range.first + g1Size;
-//        Range subRange1 = {subRange1Start, subRange1Start + g1Size};
-//        Range subRange2 = {subRange2Start, subRange2Start + g2Size};
-//
-//        auto it1 = indices.data() + subRange1Start;
-//        for (auto& g : group1s) {
-//            std::memcpy(it1, g.data(), g.size() * sizeof(uint32_t));
-//            it1 += g.size();
-//        }
-//        auto it2 = indices.data() + subRange2Start;
-//        for (auto& g : group2s) {
-//            std::memcpy(it2, g.data(), g.size() * sizeof(uint32_t));
-//            it2 += g.size();
-//        }
-//
-//        // aussume power of 2 threads!
-//        uint32_t branch1Threads = numThreads == 1 ? 1 : numThreads / 2;
-//        uint32_t branch2hreads = numThreads == 1 ? 1 : numThreads / 2;
-//        void splitKmeansBinaryParalellRec(Range range, uint32_t numThreads, uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints, float points[][104], vector<Range>& ranges, std::mutex groups_mtx, vector<uint32_t>& indices) {
-//
-//    }
-//
-//
-//}
+
+
+void splitKmeansBinaryTbb(Range range,
+                          uint32_t knnIterations,
+                          uint32_t maxGroupSize,
+                          float points[][104],
+                          vector<uint32_t>& indices,
+                          tbb::concurrent_vector<Range>& completed
+) {
+    auto startKnn = hclock::now();
+
+    uint32_t rangeSize = range.second - range.first;
+    if (rangeSize < maxGroupSize) {
+        completed.push_back(range);
+    } else {
+        begin_kmeans:
+        //
+        std::uniform_int_distribution<uint32_t> distribution(range.first, range.second-1);
+        uint32_t c1 = distribution(rd);
+        uint32_t c2 = distribution(rd);
+        while (c1 == c2) { c2 = distribution(rd); }
+
+        // copy points into Vec objects
+        Vec center1(dims);
+        Vec center2(dims);
+        // TODO use copy as memcpy not safe
+        for (uint32_t i = 0; i < dims; ++i) {
+            center1[i]  = points[c1][i];
+            center2[i]  = points[c2][i];
+        }
+
+        for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
+            auto between = scalarMult(0.5, add(center1, center2));
+            auto coefs = sub(center1, between);
+            auto offset = dot(between.data(), coefs.data());
+            // dot(x, coefs) >= offset means nearer to center1
+
+            using centroid_agg = pair<uint32_t, vector<double>>;
+            tbb::combinable<pair<centroid_agg, centroid_agg>> agg(make_pair(make_pair(0, vector<double>(100, 0.0f)), make_pair(0, vector<double>(100, 0.0f))));
+            tbb::parallel_for(
+                    tbb::blocked_range<uint32_t>(range.first, range.second),
+                    [&](oneapi::tbb::blocked_range<uint32_t> r) {
+                        auto& [agg1, agg2] = agg.local();
+                        for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                            auto id = indices[i];
+                            auto& pt = points[id];
+                            bool nearerCenter1 = dot(coefs.data(), pt) >= offset;
+                            auto& aggToUse = nearerCenter1 ? agg1 : agg2;
+                            aggToUse.first++;
+                            for (uint32_t j = 0; j < dims; ++j) { aggToUse.second[j] += pt[j]; }
+                        }
+                    }
+            );
+            auto [c1_agg, c2_agg] = agg.combine([](const pair<centroid_agg, centroid_agg>& x, const pair<centroid_agg, centroid_agg>& y) {
+                centroid_agg c1{0, vector<double>(100, 0.0f)};
+                centroid_agg c2{0, vector<double>(100, 0.0f)};
+                c1.first = x.first.first + y.first.first;
+                c2.first = x.second.first + y.second.first;
+                for (uint32_t j = 0; j < dims; ++j) {
+                    c1.second[j] = x.first.second[j] + y.first.second[j];
+                    c2.second[j] = x.second.second[j] + y.second.second[j];
+                }
+                return make_pair(c1, c2);
+            });
+
+            if (c1_agg.first == 0 || c2_agg.first == 0) {
+                goto begin_kmeans;
+            }
+
+            // recompute centers based on averages
+            for (uint32_t i = 0; i < dims; ++i) {
+                center1[i] = c1_agg.second[i] / c1_agg.first;
+                center2[i] = c2_agg.second[i] / c2_agg.first;
+            }
+        }
+
+        // compute final groups
+        auto between = scalarMult(0.5, add(center1, center2));
+        auto coefs = sub(center1, between);
+        auto offset = dot(between.data(), coefs.data());
+
+        using groups = pair<vector<uint32_t>, vector<uint32_t>>;
+        tbb::combinable<groups> groupsAgg(make_pair<>(vector<uint32_t>(), vector<uint32_t>()));
+        tbb::parallel_for(
+                tbb::blocked_range<uint32_t>(range.first, range.second),
+                [&](tbb::blocked_range<uint32_t> r) {
+                    auto& [g1, g2] = groupsAgg.local();
+                    for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                        auto id = indices[i];
+                        auto& pt = points[id];
+                        bool nearerCenter1 = dot(coefs.data(), pt) >= offset;
+                        auto& group = nearerCenter1 ? g1 : g2;
+                        group.push_back(id);
+                    }
+                }
+        );
+        auto [group1, group2] = groupsAgg.combine([](const groups& x, const groups& y) {
+            vector<uint32_t> g1;
+            vector<uint32_t> g2;
+            g1.insert(g1.end(), x.first.begin(), x.first.end());
+            g1.insert(g1.end(), y.first.begin(), y.first.end());
+            g2.insert(g2.end(), x.second.begin(), x.second.end());
+            g2.insert(g2.end(), y.second.begin(), y.second.end());
+            return make_pair(g1, g2);
+        });
+
+        if (group1.empty() || group2.empty()) {
+            goto begin_kmeans;
+        }
+
+        // build ranges
+        uint32_t subRange1Start = range.first;
+        uint32_t subRange2Start = range.first + group1.size();
+        Range subRange1 = {subRange1Start, subRange1Start + group1.size()};
+        Range subRange2 = {subRange2Start, subRange2Start + group2.size()};
+
+        auto it1 = indices.data() + subRange1Start;
+        std::memcpy(it1, group1.data(), group1.size() * sizeof(uint32_t));
+        auto it2 = indices.data() + subRange2Start;
+        std::memcpy(it2, group2.data(), group2.size() * sizeof(uint32_t));
+
+        tbb::parallel_invoke(
+            [&]{ splitKmeansBinaryTbb(subRange1, knnIterations, maxGroupSize, points, indices, completed); },
+            [&]{ splitKmeansBinaryTbb(subRange2, knnIterations, maxGroupSize, points, indices, completed); }
+        );
+    }
+}
 
 
 
@@ -1898,7 +1872,7 @@ void splitSortForAdjacency(vector<Vec>& pointsRead, std::vector<uint32_t>& newTo
 }
 
 
-void splitSortKnnForAdjacency(vector<Vec>& pointsRead, std::vector<uint32_t>& newToOldIndices, float points[][104], uint32_t numThreads, uint32_t numPoints, vector<Range>& ranges) {
+void splitSortKnnForAdjacency(vector<Vec>& pointsRead, std::vector<uint32_t>& newToOldIndices, float points[][104], uint32_t numThreads, uint32_t numPoints, tbb::concurrent_vector<Range>& ranges) {
     auto startAdjacencySort = hclock::now();
     std::iota(newToOldIndices.begin(), newToOldIndices.end(), 0);
     splitKmeansBinaryAdjacency(1, 1500, numPoints, pointsRead, ranges, newToOldIndices);
@@ -1952,7 +1926,7 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
     auto numThreads = std::thread::hardware_concurrency();
 
     // rewrite point data in adjacent memory and sort in a group order
-    vector<Range> ranges;
+    tbb::concurrent_vector<Range> ranges;
     std::vector<uint32_t> newToOldIndices(numPoints);
     float (*points)[104] = reinterpret_cast<float(*)[104]>(new __m256[(numPoints * 104 * sizeof(float)) / sizeof(__m256)]);
     splitSortKnnForAdjacency(pointsRead, newToOldIndices, points, numThreads, numPoints, ranges);
@@ -1968,8 +1942,11 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
 
         if (!first) {
             auto startGroup = hclock::now();
-            splitKmeansBinary(1, 1500, numPoints, points, ranges, indices);
+//            splitKmeansBinary(1, 1500, numPoints, points, ranges, indices);
+            splitKmeansBinaryTbb({0, numPoints}, 1, 1500, points, indices, ranges);
+
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
+            std::cout << "grouping time: " << groupDuration << '\n';
             groupingTime += groupDuration;
         }
 
@@ -1977,7 +1954,7 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
 
         vector<std::thread> threads;
         std::atomic<uint32_t> count = 0;
-        Task<Range> tasks(ranges);
+        Task<Range, tbb::concurrent_vector<Range>> tasks(ranges);
         for (uint32_t t = 0; t < numThreads; ++t) {
             threads.emplace_back([&]() {
                 auto optRange = tasks.getTask();
