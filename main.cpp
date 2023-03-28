@@ -1521,6 +1521,42 @@ void splitKmeansBinaryTbbProcess(Range range,
     }
 }
 
+pair<Vec, Vec> kmeansStartVecs(Range& range, float points[][104]) {
+    uint32_t rangeSize = range.second - range.first;
+    uint32_t sampleSize = pow(log10(rangeSize), 2.5); // 129 samples for 10m bucket, 16 samples for bucket of 1220
+    vector<uint32_t> idSample;
+    idSample.reserve(sampleSize);
+    std::uniform_int_distribution<uint32_t> distribution(range.first, range.second-1);
+    while (idSample.size() < sampleSize) { 
+        idSample.push_back(distribution(rd));
+    }
+  
+    float maxDist = std::numeric_limits<float>::min();
+    float* pii = nullptr;
+    float* pjj = nullptr;
+    for (uint32_t i = 0; i < idSample.size() - 1; ++i) {
+        for (uint32_t j = i+1; j < idSample.size(); ++j) {
+            float* pi = points[idSample[i]];
+            float* pj = points[idSample[j]];
+            float dist = distance(pi, pj);
+            if (dist > maxDist) {
+                maxDist = dist;
+                pii = pi;
+                pjj = pj;
+            }
+        }
+    }
+        
+    // copy points into Vec objects
+    Vec center1(dims);
+    Vec center2(dims);
+    // TODO use copy as memcpy not safe
+    for (uint32_t i = 0; i < dims; ++i) {
+        center1[i]  = pii[i];
+        center2[i]  = pjj[i];
+    }
+    return make_pair(center1, center2);
+}
 
 
 void splitKmeansBinaryTbb(Range range,
@@ -1537,20 +1573,7 @@ void splitKmeansBinaryTbb(Range range,
         completed.push_back(range);
     } else {
         begin_kmeans:
-        //
-        std::uniform_int_distribution<uint32_t> distribution(range.first, range.second-1);
-        uint32_t c1 = distribution(rd);
-        uint32_t c2 = distribution(rd);
-        while (c1 == c2) { c2 = distribution(rd); }
-
-        // copy points into Vec objects
-        Vec center1(dims);
-        Vec center2(dims);
-        // TODO use copy as memcpy not safe
-        for (uint32_t i = 0; i < dims; ++i) {
-            center1[i]  = points[c1][i];
-            center2[i]  = points[c2][i];
-        }
+        auto [center1, center2] = kmeansStartVecs(range, points);
 
         for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
             auto between = scalarMult(0.5, add(center1, center2));
@@ -2231,7 +2254,7 @@ int main(int argc, char **argv) {
 
   // Knng constuction
   vector<vector<uint32_t>> knng(nodes.size());
-  constructResultCombinedSplitProcess(nodes, knng);
+  constructResultSplitting(nodes, knng);
 
   // Save to ouput.bin
   auto startSave = hclock::now();
