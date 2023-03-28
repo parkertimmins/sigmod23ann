@@ -41,3 +41,68 @@ run:
  
 
 
+===================================================================================================================
+Slow Kmean processing speed:
+Version: 106e79a (not kmeans)
+    Iteration: 0
+    group hash time: 369
+    histogram split time: 195
+    processing time: 8330
+    count: 1000000
+    --------------------------------------------------------------------------------------------------------
+    Iteration: 1
+    group hash time: 196
+    histogram split time: 88
+    processing time: 4225
+    count: 1000000
+    --------------------------------------------------------------------------------------------------------
+    Iteration: 2
+    group hash time: 186
+    histogram split time: 97
+    processing time: 3482
+    count: 1000000
+    --------------------------------------------------------------------------------------------------------
+    Iteration: 3
+    group hash time: 196
+    histogram split time: 83
+    processing time: 3082
+    count: 1000000
+    --------------------------------------------------------------------------------------------------------
+    Iteration: 4
+    group hash time: 196
+    histogram split time: 76
+    processing time: 3186
+    count: 1000000
+
+Version: Kmeans
+
+    Iteration: 0
+    processing time: 5859
+    pair count: 142127330
+    count: 1000000
+    --------------------------------------------------------------------------------------------------------
+    group knn time: 9001
+    Iteration: 1
+    processing time: 13179
+    pair count: 284394198
+    count: 2000000
+    --------------------------------------------------------------------------------------------------------
+    group knn time: 5538
+    Iteration: 2
+    processing time: 9991
+    pair count: 426347408
+    count: 3000000
+    --------------------------------------------------------------------------------------------------------
+    group knn time: 5601
+    Iteration: 3
+    processing time: 9637
+    pair count: 567824012
+    count: 4000000
+    --------------------------------------------------------------------------------------------------------
+    group knn time: 5799
+    Iteration: 4
+    processing time: 9722
+    pair count: 710469898
+    count: 5000000
+
+Very silly bug! Processing all ranges multiple times!
