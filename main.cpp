@@ -2155,7 +2155,7 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
             splitKmeansBinaryTbb({0, numPoints}, 1, 1000, points, indices, ranges);
 
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
-            std::cout << "grouping time: " << groupDuration << '\n';
+            std::cout << "time: " << groupDuration << '\n';
             groupingTime += groupDuration;
         }
 
