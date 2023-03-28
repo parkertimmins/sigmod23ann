@@ -1573,7 +1573,20 @@ void splitKmeansBinaryTbb(Range range,
         completed.push_back(range);
     } else {
         begin_kmeans:
-        auto [center1, center2] = kmeansStartVecs(range, points);
+        //
+        std::uniform_int_distribution<uint32_t> distribution(range.first, range.second-1);
+        uint32_t c1 = distribution(rd);
+        uint32_t c2 = distribution(rd);
+        while (c1 == c2) { c2 = distribution(rd); }
+
+        // copy points into Vec objects
+        Vec center1(dims);
+        Vec center2(dims);
+        // TODO use copy as memcpy not safe
+        for (uint32_t i = 0; i < dims; ++i) {
+            center1[i]  = points[c1][i];
+            center2[i]  = points[c2][i];
+        }
 
         for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
             auto between = scalarMult(0.5, add(center1, center2));
@@ -2168,7 +2181,8 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
     bool first = true;
 
     uint32_t iteration = 0;
-    while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
+    while (iteration < 150) {
+        //while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
 #ifdef PRINT_OUTPUT
         std::cout << "Iteration: " << iteration << '\n';
 #endif
