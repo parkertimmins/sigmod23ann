@@ -261,12 +261,119 @@ Vec project(const Vec& u, const Vec& v) {
     return scalarMult(dot(u.data(), v.data()), normalize(u));
 }
 
+struct KnnSetScannableSimd {
+private:
+    alignas(sizeof(__m256)) float dists[100] = {};
+    alignas(sizeof(__m256)) uint32_t current_ids[100] = {};
+    uint32_t size = 0;
+    float lower_bound = 0; // 0 -> max val in first 100 -> decreases
+public:
+    bool contains(uint32_t node) {
+        for (uint32_t i = 0; i < size; ++i) {
+            if (current_ids[i] == node) { return true; }
+        }
+        return false;
+    }
+
+    bool containsFull(uint32_t node) {
+        __m256i pattern = _mm256_set1_epi32(node);
+        auto* ids = current_ids;
+        for (uint32_t i = 0; i < 96; i+=8) {
+            auto block = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(ids));
+            auto match = _mm256_movemask_epi8(_mm256_cmpeq_epi32(pattern, block));
+            if (match) { return true; }
+            ids += 8;
+        }
+        for (uint32_t i = 96; i < size; ++i) {
+            if (current_ids[i] == node) { return true; }
+        }
+        return false;
+    }
+
+    void append(const uint32_t candidate_id, float dist) {
+        current_ids[size] = candidate_id;
+        dists[size] = dist;
+        size++;
+    }
+
+    // find index of distance that is known to exist
+    uint32_t getIdxOfDist(float matchDist) {
+        __m256i pattern = _mm256_castps_si256(_mm256_set1_ps(matchDist));
+        auto* distances = dists;
+        for (uint32_t i = 0; i < 96; i+=8) {
+            __m256i block = _mm256_castps_si256(_mm256_load_ps(distances));
+            uint32_t match = _mm256_movemask_epi8(_mm256_cmpeq_epi32(pattern, block));
+            if (match) {
+                return i + (__builtin_ctz(match) >> 2);
+            }
+            distances += 8;
+        }
+        for (uint32_t i = 96; i < size; ++i) {
+            if (dists[i] == matchDist) { return i; }
+        }
+    }
+
+    float getMax() {
+        __m256 maxes = _mm256_set1_ps(std::numeric_limits<float>::min());
+        auto* distances = dists;
+        for (uint32_t i = 0; i < 96; i+=8) {
+            __m256 block = _mm256_load_ps(distances);
+            maxes = _mm256_max_ps(maxes, block);
+            distances += 8;
+        }
+
+        alignas(sizeof(__m256)) float maxArr[8] = {};
+        _mm256_store_ps(maxArr, maxes);
+        float max = std::numeric_limits<float>::min();
+        for (float m: maxArr) {
+            max = std::max(m, max);
+        }
+        for (unsigned i = 96; i < dims; ++i) {
+            max = std::max(dists[i], max);
+        }
+        return max;
+    }
+
+    // This may misorder nodes of equal sizes
+    void addCandidate(const uint32_t candidate_id, float dist) {
+        if (size < k) {
+            if (!contains(candidate_id)) {
+                append(candidate_id, dist);
+                lower_bound = std::max(lower_bound, dist);
+            }
+        } else if (dist < lower_bound) {
+            if (!containsFull(candidate_id)) {
+                uint32_t maxIdx = getIdxOfDist(lower_bound);
+                dists[maxIdx] = dist;
+                current_ids[maxIdx] = candidate_id;
+                lower_bound = getMax();
+            }
+        }
+    }
+
+    vector<uint32_t> finalize() {
+        vector<pair<float, uint32_t>> queue(size);
+        for (uint32_t i = 0; i < size; ++i) {
+            queue.emplace_back(dists[i], current_ids[i]);
+        }
+
+        std::sort(queue.begin(), queue.begin() + size);
+        vector<uint32_t> knn;
+        for (uint32_t i = 0; i < size; ++i) {
+            knn.push_back(queue[i].second);
+        }
+        return knn;
+    }
+};
+
+
 
 struct KnnSetScannable {
 private:
     vector<pair<float, uint32_t>> queue;
     uint32_t size = 0;
-    float lower_bound = std::numeric_limits<float>::max();
+    float lower_bound = 0; // 0 -> max val in first 100 -> decreases
+
 public:
     KnnSetScannable() {
         queue.resize(k);
@@ -289,9 +396,11 @@ public:
 
     // This may misorder nodes of equal sizes
     void addCandidate(const uint32_t candidate_id, float dist) {
-        if (size < k && !contains(candidate_id)) {
-            append({dist, candidate_id});
-            lower_bound = std::max(lower_bound, dist);
+        if (size < k) {
+            if (!contains(candidate_id)) {
+                append({dist, candidate_id});
+                lower_bound = std::max(lower_bound, dist);
+            }
         } else if (dist < lower_bound) {
             float secondMaxVal = std::numeric_limits<float>::min();
             float maxVal = std::numeric_limits<float>::min();
@@ -411,7 +520,7 @@ void addCandidatesGroup(float points[][104],
 void addCandidates(float points[][104],
                    vector<uint32_t>& indices,
                    Range range,
-                   vector<KnnSetScannable>& idToKnn) {
+                   vector<KnnSetScannableSimd>& idToKnn) {
     for (uint32_t i=range.first; i < range.second-1; ++i) {
         auto id1 = indices[i];
         auto& knn1 = idToKnn[id1];
@@ -1400,7 +1509,7 @@ void splitKmeansBinaryTbbProcess(Range range,
                           uint32_t maxGroupSize,
                           float points[][104],
                           vector<uint32_t>& indices,
-                          vector<KnnSetScannable>& idToKnn
+                          vector<KnnSetScannableSimd>& idToKnn
 ) {
     auto startKnn = hclock::now();
 
@@ -2085,7 +2194,7 @@ void constructResultCombinedSplitProcess(vector<Vec>& pointsRead, vector<vector<
     std::cout << "start run with time bound: " << timeBoundsMs << '\n';
 #endif
     auto startTime = hclock::now();
-    vector<KnnSetScannable> idToKnn(pointsRead.size());
+    vector<KnnSetScannableSimd> idToKnn(pointsRead.size());
     uint32_t numPoints = pointsRead.size();
     auto numThreads = std::thread::hardware_concurrency();
 
@@ -2167,7 +2276,7 @@ void constructResultSplitting(vector<Vec>& pointsRead, vector<vector<uint32_t>>&
     std::cout << "start run with time bound: " << timeBoundsMs << '\n';
 #endif
     auto startTime = hclock::now();
-    vector<KnnSetScannable> idToKnn(pointsRead.size());
+    vector<KnnSetScannableSimd> idToKnn(pointsRead.size());
     uint32_t numPoints = pointsRead.size();
     auto numThreads = std::thread::hardware_concurrency();
 
