@@ -89,8 +89,7 @@ struct SolutionRandomKD {
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize) {
             completed.push_back(range);
-        } else {
-        begin_split:
+        } else if (rangeSize < 10'000) { 
             auto sample = samplesIds(range, indices);
             Vec pca1 = estimatePca1(sample, points);
 
@@ -110,17 +109,66 @@ struct SolutionRandomKD {
                 return dot(pca1.data(), points[id]) >= median;
             });
             auto range1Size = middleIt - indicesBegin;
-            auto range2Size = indicesEnd - middleIt;
             Range lo = {range.first, range.first + range1Size};
             Range hi = {range.first + range1Size , range.second};
-
-            if (range1Size == 0 || range2Size == 0) {
-                goto begin_split;
-            }
 
             tbb::parallel_invoke(
                 [&]{ splitLessParallel(lo, maxGroupSize, points, indices, completed); },
                 [&]{ splitLessParallel(hi, maxGroupSize, points, indices, completed); }
+            );
+        } else {
+            auto sample = samplesIds(range, indices);
+            Vec pca1 = estimatePca1(sample, points);
+
+            vector<pair<float, float*>> projectionValues;
+            projectionValues.reserve(sample.size());
+            for (auto& id : sample) {
+                float* pt = points[id];
+                auto proj = dot(pt, pca1.data());
+                projectionValues.emplace_back(proj, pt);
+            }
+            std::sort(projectionValues.begin(), projectionValues.end());
+            auto median = projectionValues[sample.size() / 2].first;
+
+            // compute final groups
+            using groups = pair<vector<uint32_t>, vector<uint32_t>>;
+            tbb::combinable<groups> groupsAgg(make_pair<>(vector<uint32_t>(), vector<uint32_t>()));
+            tbb::parallel_for(
+                    tbb::blocked_range<uint32_t>(range.first, range.second),
+                    [&](tbb::blocked_range<uint32_t> r) {
+                        auto& [g1, g2] = groupsAgg.local();
+                        for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                            auto id = indices[i];
+                            auto& pt = points[id];
+                            auto& group = dot(pca1.data(), pt) >= median ? g1 : g2;
+                            group.push_back(id);
+                        }
+                    }
+            );
+            auto [group1, group2] = groupsAgg.combine([](const groups& x, const groups& y) {
+                vector<uint32_t> g1;
+                vector<uint32_t> g2;
+                g1.insert(g1.end(), x.first.begin(), x.first.end());
+                g1.insert(g1.end(), y.first.begin(), y.first.end());
+                g2.insert(g2.end(), x.second.begin(), x.second.end());
+                g2.insert(g2.end(), y.second.begin(), y.second.end());
+                return make_pair(g1, g2);
+            });
+
+            // build ranges
+            uint32_t subRange1Start = range.first;
+            uint32_t subRange2Start = range.first + group1.size();
+            Range subRange1 = {subRange1Start, subRange1Start + group1.size()};
+            Range subRange2 = {subRange2Start, subRange2Start + group2.size()};
+
+            auto it1 = indices.data() + subRange1Start;
+            std::memcpy(it1, group1.data(), group1.size() * sizeof(uint32_t));
+            auto it2 = indices.data() + subRange2Start;
+            std::memcpy(it2, group2.data(), group2.size() * sizeof(uint32_t));
+
+            tbb::parallel_invoke(
+                [&]{ split(subRange1, maxGroupSize, points, indices, completed); },
+                [&]{ split(subRange2, maxGroupSize, points, indices, completed); }
             );
         }
     }

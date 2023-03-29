@@ -125,7 +125,7 @@ Vec add(const Vec& lhs, const Vec& rhs) {
 }
 
 Vec sub(const float* lhs, const float* rhs) {
-    auto dim = 100;
+    uint32_t dim = 100;
     Vec result(dim);
     for (uint32_t i = 0; i < dim; i++) {
         result[i]  = lhs[i] - rhs[i];
