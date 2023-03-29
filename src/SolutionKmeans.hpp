@@ -246,7 +246,7 @@ struct SolutionKmeans {
                 using centroid_agg = pair<uint32_t, vector<double>>;
                 tbb::combinable<pair<centroid_agg, centroid_agg>> agg(make_pair(make_pair(0, vector<double>(100, 0.0f)), make_pair(0, vector<double>(100, 0.0f))));
                 tbb::parallel_for(
-                        tbb::blocked_range<uint32_t>(range.first, range.second, 1'000),
+                        tbb::blocked_range<uint32_t>(range.first, range.second, 200),
                         [&](oneapi::tbb::blocked_range<uint32_t> r) {
                             auto& [agg1, agg2] = agg.local();
                             for (uint32_t i = r.begin(); i < r.end(); ++i) {
@@ -290,7 +290,7 @@ struct SolutionKmeans {
             using groups = pair<vector<uint32_t>, vector<uint32_t>>;
             tbb::combinable<groups> groupsAgg(make_pair<>(vector<uint32_t>(), vector<uint32_t>()));
             tbb::parallel_for(
-                    tbb::blocked_range<uint32_t>(range.first, range.second, 1'000),
+                    tbb::blocked_range<uint32_t>(range.first, range.second, 200),
                     [&](tbb::blocked_range<uint32_t> r) {
                         auto& [g1, g2] = groupsAgg.local();
                         for (uint32_t i = r.begin(); i < r.end(); ++i) {
@@ -384,8 +384,8 @@ struct SolutionKmeans {
         bool first = true;
 
         uint32_t iteration = 0;
-        while (iteration < 150) {
-            //while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
+//        while (iteration < 150) {
+        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
     #ifdef PRINT_OUTPUT
             std::cout << "Iteration: " << iteration << '\n';
     #endif
