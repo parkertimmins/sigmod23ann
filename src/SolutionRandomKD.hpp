@@ -153,7 +153,7 @@ struct SolutionRandomKD {
     static void splitSortKnnForAdjacency(float pointsRead[][104], std::vector<uint32_t>& newToOldIndices, float points[][104], uint32_t numThreads, uint32_t numPoints, tbb::concurrent_vector<Range>& ranges) {
         auto startAdjacencySort = hclock::now();
         std::iota(newToOldIndices.begin(), newToOldIndices.end(), 0);
-        split({0, numPoints}, 1000, pointsRead, newToOldIndices, ranges);
+        split({0, numPoints}, 400, pointsRead, newToOldIndices, ranges);
         vector<Range> moveRanges = splitRange({0, numPoints}, numThreads);
         vector<std::thread> threads;
         for (uint32_t t = 0; t < numThreads; ++t) {
@@ -208,7 +208,7 @@ struct SolutionRandomKD {
 
             if (!first) {
                 auto startGroup = hclock::now();
-                split({0, numPoints}, 1000, points, indices, ranges);
+                split({0, numPoints}, 400, points, indices, ranges);
 
                 auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
                 std::cout << "grouping time: " << groupDuration << '\n';
