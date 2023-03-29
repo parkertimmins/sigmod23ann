@@ -107,7 +107,7 @@ struct SolutionRandomKD {
             using groups = pair<vector<uint32_t>, vector<uint32_t>>;
             tbb::combinable<groups> groupsAgg(make_pair<>(vector<uint32_t>(), vector<uint32_t>()));
             tbb::parallel_for(
-                    tbb::blocked_range<uint32_t>(range.first, range.second),
+                    tbb::blocked_range<uint32_t>(range.first, range.second, 1000),
                     [&](tbb::blocked_range<uint32_t> r) {
                         auto& [g1, g2] = groupsAgg.local();
                         for (uint32_t i = r.begin(); i < r.end(); ++i) {
@@ -220,20 +220,20 @@ struct SolutionRandomKD {
             vector<std::thread> threads;
             std::atomic<uint32_t> count = 0;
             Task<Range, tbb::concurrent_vector<Range>> tasks(ranges);
-            for (uint32_t t = 0; t < numThreads; ++t) {
-                threads.emplace_back([&]() {
-                    auto optRange = tasks.getTask();
-                    while (optRange) {
-                        auto& range = *optRange;
-                        uint32_t rangeSize = range.second - range.first;
-                        count += rangeSize;
-                        addCandidates(points, indices, range, idToKnn);
-                        optRange = tasks.getTask();
-                    }
-                });
-            }
+//            for (uint32_t t = 0; t < numThreads; ++t) {
+//                threads.emplace_back([&]() {
+//                    auto optRange = tasks.getTask();
+//                    while (optRange) {
+//                        auto& range = *optRange;
+//                        uint32_t rangeSize = range.second - range.first;
+//                        count += rangeSize;
+//                        addCandidates(points, indices, range, idToKnn);
+//                        optRange = tasks.getTask();
+//                    }
+//                });
+//            }
 
-            for (auto& thread: threads) { thread.join(); }
+//            for (auto& thread: threads) { thread.join(); }
 
             auto processingDuration = duration_cast<milliseconds>(hclock::now() - startProcessing).count();
             processGroupsTime += processingDuration;
