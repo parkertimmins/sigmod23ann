@@ -43,142 +43,144 @@ struct SolutionKmeans {
     static inline uint64_t groupingTime = 0;
     static inline uint64_t processGroupsTime = 0;
 
-    static void splitKmeans(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints, float points[][104], vector<Range>& ranges, vector<uint32_t>& indices) {
+    static void splitKmeans(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints, float points[][104],
+                            vector<Range> &ranges, vector<uint32_t> &indices) {
 
-                                                               auto startKnn = hclock::now();
-                                                               uint32_t branchingFactor = 2;
-                                                               auto numThreads = std::thread::hardware_concurrency();
+        auto startKnn = hclock::now();
+        uint32_t branchingFactor = 2;
+        auto numThreads = std::thread::hardware_concurrency();
 
-                                                               vector<std::thread> threads;
+        vector<std::thread> threads;
 
-                                                               // ranges are within the indices array, which contains ids
-                                                               vector<Range> stack;
-                                                               stack.emplace_back(make_pair(0, numPoints));
-                                                               std::mutex stack_mtx;
-                                                               std::mutex groups_mtx;
+        // ranges are within the indices array, which contains ids
+        vector<Range> stack;
+        stack.emplace_back(make_pair(0, numPoints));
+        std::mutex stack_mtx;
+        std::mutex groups_mtx;
 
-                                                               std::atomic<uint32_t> count = 0;
-                                                               for (uint32_t t = 0; t < numThreads; ++t) {
-                                                               threads.emplace_back([&]() {
-                                                               while (count < numPoints) {
-                                                               stack_mtx.lock();
-                                                               if (stack.empty()) {
-                                                               stack_mtx.unlock();
-                                                               } else {
-                                                               auto range = stack.back(); stack.pop_back();
-                                                               stack_mtx.unlock();
-                                                               uint32_t rangeSize = range.second - range.first;
+        std::atomic<uint32_t> count = 0;
+        for (uint32_t t = 0; t < numThreads; ++t) {
+            threads.emplace_back([&]() {
+                while (count < numPoints) {
+                    stack_mtx.lock();
+                    if (stack.empty()) {
+                        stack_mtx.unlock();
+                    } else {
+                        auto range = stack.back();
+                        stack.pop_back();
+                        stack_mtx.unlock();
+                        uint32_t rangeSize = range.second - range.first;
 
-                                                               if (rangeSize < maxGroupSize) {
-                                                               count += rangeSize;
-                                                               std::lock_guard<std::mutex> guard(groups_mtx);
-                                                               ranges.push_back(range);
-                                                               } else {
-                                                               // knn splits
+                        if (rangeSize < maxGroupSize) {
+                            count += rangeSize;
+                            std::lock_guard<std::mutex> guard(groups_mtx);
+                            ranges.push_back(range);
+                        } else {
+                            // knn splits
 
-                                                               // pick 2 point ids
-                                                               std::unordered_set<uint32_t> centerIds;
-                                                               std::uniform_int_distribution<uint32_t> distribution(range.first, range.second-1);
-                                                               while (centerIds.size() < branchingFactor) {
-                                                               centerIds.insert(distribution(rd));
-                                                               }
+                            // pick 2 point ids
+                            std::unordered_set<uint32_t> centerIds;
+                            std::uniform_int_distribution<uint32_t> distribution(range.first, range.second - 1);
+                            while (centerIds.size() < branchingFactor) {
+                                centerIds.insert(distribution(rd));
+                            }
 
-                                                               // copy points into Vec objects
-                                                               vector<Vec> centers(centerIds.size());
-                                                               uint32_t c = 0;
-                                                               for (auto id : centerIds) {
-                                                               Vec& v = centers[c];
-                                                               v.resize(dims);
-                                                               std::memcpy(v.data(), points[id], dims);
-                                                               c++;
-                                                               }
+                            // copy points into Vec objects
+                            vector<Vec> centers(centerIds.size());
+                            uint32_t c = 0;
+                            for (auto id: centerIds) {
+                                Vec &v = centers[c];
+                                v.resize(dims);
+                                std::memcpy(v.data(), points[id], dims);
+                                c++;
+                            }
 
-                                                               for (auto iteration = 0; iteration < knnIterations; ++iteration) {
-                                                               vector<vector<double>> sumOfGroups(branchingFactor);
-                                                               vector<uint32_t> groupSizes(branchingFactor, 0);
-                                                               for (auto& sums: sumOfGroups) {
-                                                               sums.resize(dims);
-                                                               }
+                            for (auto iteration = 0; iteration < knnIterations; ++iteration) {
+                                vector<vector<double>> sumOfGroups(branchingFactor);
+                                vector<uint32_t> groupSizes(branchingFactor, 0);
+                                for (auto &sums: sumOfGroups) {
+                                    sums.resize(dims);
+                                }
 
-                                                               // measure distance from all points in group to each of the 2 points
-                                                               for (uint32_t i = range.first; i < range.second; ++i) {
-                                                               uint32_t minDistCenterIdx = 0;
-                                                               float minDist = std::numeric_limits<float>::max();
+                                // measure distance from all points in group to each of the 2 points
+                                for (uint32_t i = range.first; i < range.second; ++i) {
+                                    uint32_t minDistCenterIdx = 0;
+                                    float minDist = std::numeric_limits<float>::max();
 
-                                                               auto id = indices[i];
-                                                               auto& pt = points[id];
-                                                               for (uint32_t c = 0; c < branchingFactor; ++c) {
-                                                               Vec& center = centers[c];
-                                                               float dist = distance(pt, center.data());
-                                                               if (dist < minDist) {
-                                                               minDist = dist;
-                                                               minDistCenterIdx = c;
-                                                               }
-                                                               }
+                                    auto id = indices[i];
+                                    auto &pt = points[id];
+                                    for (uint32_t c = 0; c < branchingFactor; ++c) {
+                                        Vec &center = centers[c];
+                                        float dist = distance(pt, center.data());
+                                        if (dist < minDist) {
+                                            minDist = dist;
+                                            minDistCenterIdx = c;
+                                        }
+                                    }
 
-                                                               groupSizes[minDistCenterIdx]++;
-                                                               auto& vecSums = sumOfGroups[minDistCenterIdx];
-                                                               for (uint32_t i = 0; i < dims; ++i) {
-                                                               vecSums[i] += pt[i];
-                                                               }
-                                                               }
+                                    groupSizes[minDistCenterIdx]++;
+                                    auto &vecSums = sumOfGroups[minDistCenterIdx];
+                                    for (uint32_t i = 0; i < dims; ++i) {
+                                        vecSums[i] += pt[i];
+                                    }
+                                }
 
-                                                               // recompute centers based on averages
-                                                               for (uint32_t c = 0; c < branchingFactor; ++c) {
-                                                               for (uint32_t i = 0; i < dims; ++i) {
-                                                               centers[c][i] = sumOfGroups[c][i] / groupSizes[c];
-                                                               }
-                                                               }
-                                                               }
+                                // recompute centers based on averages
+                                for (uint32_t c = 0; c < branchingFactor; ++c) {
+                                    for (uint32_t i = 0; i < dims; ++i) {
+                                        centers[c][i] = sumOfGroups[c][i] / groupSizes[c];
+                                    }
+                                }
+                            }
 
-                                                               // compute final groups
-                                                               vector<vector<uint32_t>> groups(branchingFactor);
-                                                               for (uint32_t i = range.first; i < range.second; ++i) {
-                                                               uint32_t minDistCenterIdx = 0;
-                                                               float minDist = std::numeric_limits<float>::max();
+                            // compute final groups
+                            vector<vector<uint32_t>> groups(branchingFactor);
+                            for (uint32_t i = range.first; i < range.second; ++i) {
+                                uint32_t minDistCenterIdx = 0;
+                                float minDist = std::numeric_limits<float>::max();
 
-                                                               auto id = indices[i];
-                                                               auto& pt = points[id];
-                                                               for (uint32_t c = 0; c < branchingFactor; ++c) {
-                                                               Vec& center = centers[c];
-                                                               float dist = distance(pt, center.data());
-                                                               if (dist < minDist) {
-                                                               minDist = dist;
-                                                               minDistCenterIdx = c;
-                                                               }
-                                                               }
-                                                               groups[minDistCenterIdx].push_back(id);
-                                                               }
+                                auto id = indices[i];
+                                auto &pt = points[id];
+                                for (uint32_t c = 0; c < branchingFactor; ++c) {
+                                    Vec &center = centers[c];
+                                    float dist = distance(pt, center.data());
+                                    if (dist < minDist) {
+                                        minDist = dist;
+                                        minDistCenterIdx = c;
+                                    }
+                                }
+                                groups[minDistCenterIdx].push_back(id);
+                            }
 
-                                                               // build ranges
-                                                               vector<Range> subRanges;
-                                                               uint32_t start = range.first;
-                                                               for (auto& group : groups) {
-                                                               if (group.empty()) {
-                                                               continue;
-                                                               }
-                                                               uint32_t end = start + group.size();
-                                                               subRanges.emplace_back(start, end);
-                                                               for (uint32_t i = 0; i < group.size(); ++i) {
-                                                               indices[start + i] = group[i];
-                                                               }
-                                                               start = end;
-                                                               }
-                                                               {
-                                                               std::lock_guard<std::mutex> guard(stack_mtx);
-                                                               stack.insert(stack.end(), subRanges.begin(), subRanges.end());
-                                                               }
-                                                               }
-                                                               }
-                                                               }
+                            // build ranges
+                            vector<Range> subRanges;
+                            uint32_t start = range.first;
+                            for (auto &group: groups) {
+                                if (group.empty()) {
+                                    continue;
+                                }
+                                uint32_t end = start + group.size();
+                                subRanges.emplace_back(start, end);
+                                for (uint32_t i = 0; i < group.size(); ++i) {
+                                    indices[start + i] = group[i];
+                                }
+                                start = end;
+                            }
+                            {
+                                std::lock_guard<std::mutex> guard(stack_mtx);
+                                stack.insert(stack.end(), subRanges.begin(), subRanges.end());
+                            }
+                        }
+                    }
+                }
 
-                                                               });
-                                                               }
-                                                               for (auto& thread: threads) { thread.join(); }
+            });
+        }
+        for (auto &thread: threads) { thread.join(); }
 
-                                                               #ifdef PRINT_OUTPUT
-                                                               std::cout << "group knn time: " << duration_cast<milliseconds>(hclock::now() - startKnn).count() << '\n';
-                                                                                                       #endif
+#ifdef PRINT_OUTPUT
+        std::cout << "group knn time: " << duration_cast<milliseconds>(hclock::now() - startKnn).count() << '\n';
+#endif
     }
 
     static pair<Vec, Vec> kmeansStartVecs(Range& range, float points[][104], vector<uint32_t>& indices) {
@@ -227,8 +229,6 @@ struct SolutionKmeans {
                               vector<uint32_t>& indices,
                               tbb::concurrent_vector<Range>& completed
     ) {
-        auto startKnn = hclock::now();
-
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize) {
             completed.push_back(range);

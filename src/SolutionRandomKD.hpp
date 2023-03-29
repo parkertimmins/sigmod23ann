@@ -78,6 +78,54 @@ struct SolutionRandomKD {
         return normalize(sub(pii, pjj));
     }
 
+
+    // handle both point vector data and array data
+    static void splitLessParallel(Range range,
+                      uint32_t maxGroupSize,
+                      float points[][104],
+                      vector<uint32_t>& indices,
+                      tbb::concurrent_vector<Range>& completed
+    ) {
+        uint32_t rangeSize = range.second - range.first;
+        if (rangeSize < maxGroupSize) {
+            completed.push_back(range);
+        } else {
+        begin_split:
+            auto sample = samplesIds(range, indices);
+            Vec pca1 = estimatePca1(sample, points);
+
+            vector<pair<float, float*>> projectionValues;
+            projectionValues.reserve(sample.size());
+            for (auto& id : sample) {
+                float* pt = points[id];
+                auto proj = dot(pt, pca1.data());
+                projectionValues.emplace_back(proj, pt);
+            }
+            std::sort(projectionValues.begin(), projectionValues.end());
+            auto median = projectionValues[sample.size() / 2].first;
+
+            auto indicesBegin = indices.begin() + range.first;
+            auto indicesEnd = indices.begin() + range.second;
+            auto middleIt = std::partition(indicesBegin, indicesEnd, [&](uint32_t id) {
+                return dot(pca1.data(), points[id]) >= median;
+            });
+            auto range1Size = middleIt - indicesBegin;
+            auto range2Size = indicesEnd - middleIt;
+            Range lo = {range.first, range.first + range1Size};
+            Range hi = {range.first + range1Size , range.second};
+
+            if (range1Size == 0 || range2Size == 0) {
+                goto begin_split;
+            }
+
+            tbb::parallel_invoke(
+                [&]{ splitLessParallel(lo, maxGroupSize, points, indices, completed); },
+                [&]{ splitLessParallel(hi, maxGroupSize, points, indices, completed); }
+            );
+        }
+    }
+
+
     // handle both point vector data and array data
     static void split(Range range,
                       uint32_t maxGroupSize,
@@ -107,7 +155,7 @@ struct SolutionRandomKD {
             using groups = pair<vector<uint32_t>, vector<uint32_t>>;
             tbb::combinable<groups> groupsAgg(make_pair<>(vector<uint32_t>(), vector<uint32_t>()));
             tbb::parallel_for(
-                    tbb::blocked_range<uint32_t>(range.first, range.second, 1000),
+                    tbb::blocked_range<uint32_t>(range.first, range.second),
                     [&](tbb::blocked_range<uint32_t> r) {
                         auto& [g1, g2] = groupsAgg.local();
                         for (uint32_t i = r.begin(); i < r.end(); ++i) {
@@ -153,7 +201,7 @@ struct SolutionRandomKD {
     static void splitSortKnnForAdjacency(float pointsRead[][104], std::vector<uint32_t>& newToOldIndices, float points[][104], uint32_t numThreads, uint32_t numPoints, tbb::concurrent_vector<Range>& ranges) {
         auto startAdjacencySort = hclock::now();
         std::iota(newToOldIndices.begin(), newToOldIndices.end(), 0);
-        split({0, numPoints}, 400, pointsRead, newToOldIndices, ranges);
+        splitLessParallel({0, numPoints}, 400, pointsRead, newToOldIndices, ranges);
         vector<Range> moveRanges = splitRange({0, numPoints}, numThreads);
         vector<std::thread> threads;
         for (uint32_t t = 0; t < numThreads; ++t) {
@@ -208,7 +256,7 @@ struct SolutionRandomKD {
 
             if (!first) {
                 auto startGroup = hclock::now();
-                split({0, numPoints}, 400, points, indices, ranges);
+                splitLessParallel({0, numPoints}, 400, points, indices, ranges);
 
                 auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
                 std::cout << "grouping time: " << groupDuration << '\n';
@@ -220,20 +268,20 @@ struct SolutionRandomKD {
             vector<std::thread> threads;
             std::atomic<uint32_t> count = 0;
             Task<Range, tbb::concurrent_vector<Range>> tasks(ranges);
-//            for (uint32_t t = 0; t < numThreads; ++t) {
-//                threads.emplace_back([&]() {
-//                    auto optRange = tasks.getTask();
-//                    while (optRange) {
-//                        auto& range = *optRange;
-//                        uint32_t rangeSize = range.second - range.first;
-//                        count += rangeSize;
-//                        addCandidates(points, indices, range, idToKnn);
-//                        optRange = tasks.getTask();
-//                    }
-//                });
-//            }
+            for (uint32_t t = 0; t < numThreads; ++t) {
+                threads.emplace_back([&]() {
+                    auto optRange = tasks.getTask();
+                    while (optRange) {
+                        auto& range = *optRange;
+                        uint32_t rangeSize = range.second - range.first;
+                        count += rangeSize;
+                        addCandidates(points, indices, range, idToKnn);
+                        optRange = tasks.getTask();
+                    }
+                });
+            }
 
-//            for (auto& thread: threads) { thread.join(); }
+            for (auto& thread: threads) { thread.join(); }
 
             auto processingDuration = duration_cast<milliseconds>(hclock::now() - startProcessing).count();
             processGroupsTime += processingDuration;
