@@ -1,29 +1,17 @@
-
-/**
- *  Example code for IO, read binary data vectors and write knng to path.
- *
- */
-
 #include <fstream>
 #include <iostream>
 #include <numeric>
 #include <string>
 #include <vector>
-#include <smmintrin.h>
-#include <emmintrin.h>
-#include <immintrin.h>
-#include <boost/align/aligned_allocator.hpp>
 
 #include "assert.h"
+#include "Constants.hpp"
 
 using std::cout;
 using std::endl;
 using std::string;
 using std::vector;
 
-template<class T, std::size_t Alignment = sizeof(__m256)>
-using aligned_vector = std::vector<T, boost::alignment::aligned_allocator<T, Alignment> >;
-using Vec = aligned_vector<float>;
 
 /// @brief Save knng in binary format (uint32_t) with name "output.bin"
 /// @param knng a (N * 100) shape 2-D vector
