@@ -38,7 +38,7 @@ using std::make_pair;
 using std::pair;
 using std::vector;
 
-struct KmeansSolution {
+struct SolutionKmeans {
 
     static inline uint64_t groupingTime = 0;
     static inline uint64_t processGroupsTime = 0;
@@ -181,147 +181,6 @@ struct KmeansSolution {
                                                                                                                                                                    #endif
                                                                                                                                                                    }
 
-    static void splitKmeansBinaryAdjacency(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints, vector<Vec>& points, tbb::concurrent_vector<Range>& ranges, vector<uint32_t>& indices) {
-
-        auto startKnn = hclock::now();
-        auto numThreads = std::thread::hardware_concurrency();
-
-        vector<std::thread> threads;
-
-        // ranges are within the indices array, which contains ids
-        vector<Range> stack;
-        stack.emplace_back(make_pair(0, numPoints));
-        std::mutex stack_mtx;
-        std::mutex groups_mtx;
-
-        std::atomic<uint32_t> count = 0;
-        for (uint32_t t = 0; t < numThreads; ++t) {
-            threads.emplace_back([&]() {
-                while (count < numPoints) {
-                    stack_mtx.lock();
-                    if (stack.empty()) {
-                        stack_mtx.unlock();
-                    } else {
-                        auto range = stack.back(); stack.pop_back();
-                        stack_mtx.unlock();
-                        uint32_t rangeSize = range.second - range.first;
-
-                        if (rangeSize < maxGroupSize) {
-                            count += rangeSize;
-                            std::lock_guard<std::mutex> guard(groups_mtx);
-                            ranges.push_back(range);
-                        } else {
-                            // knn splits
-
-                            begin_kmeans:
-                            // pick 2 point ids
-                            std::uniform_int_distribution<uint32_t> distribution(range.first, range.second-1);
-                            uint32_t c1 = distribution(rd);
-                            uint32_t c2 = distribution(rd);
-                            while (c1 == c2) {
-                                c2 = distribution(rd);
-                            }
-
-                            // copy points into Vec objects
-                            Vec center1(dims);
-                            Vec center2(dims);
-
-                            for (uint32_t i = 0; i < dims; ++i) {
-                                center1[i]  = points[c1][i];
-                                center2[i]  = points[c2][i];
-                            }
-
-
-                            for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
-                                auto between = scalarMult(0.5, add(center1, center2));
-                                auto coefs = sub(center1, between);
-                                auto offset = dot(between.data(), coefs.data());
-                                // dot(x, coefs) >= offset means nearer to center1
-
-                                vector<double> sumsGroups1(dims, 0);
-                                vector<double> sumsGroups2(dims, 0);
-                                uint32_t group1Size = 0;
-                                uint32_t group2Size = 0;
-
-                                // measure distance from all points in group to each of the 2 points
-                                for (uint32_t i = range.first; i < range.second; ++i) {
-
-                                    auto id = indices[i];
-                                    auto& pt = points[id];
-                                    bool nearerCenter1 = dot(coefs.data(), pt.data()) >= offset;
-                                    if (nearerCenter1) {
-                                        group1Size++;
-                                        for (uint32_t j = 0; j < dims; ++j) {
-                                            sumsGroups1[j] += pt[j];
-                                        }
-                                    } else {
-                                        group2Size++;
-                                        for (uint32_t j = 0; j < dims; ++j) {
-                                            sumsGroups2[j] += pt[j];
-                                        }
-                                    }
-                                }
-
-                                if (group1Size == 0 || group2Size == 0) {
-                                    goto begin_kmeans;
-                                }
-
-                                // recompute centers based on averages
-                                for (uint32_t i = 0; i < dims; ++i) {
-                                    center1[i] = sumsGroups1[i] / group1Size;
-                                    center2[i] = sumsGroups2[i] / group2Size;
-                                }
-                            }
-
-                            auto between = scalarMult(0.5, add(center1, center2));
-                            auto coefs = sub(center1, between);
-                            auto offset = dot(between.data(), coefs.data());
-                            // dot(x, coefs) >= offset means nearer to center1
-                            // compute final groups
-                            vector<uint32_t> group1;
-                            vector<uint32_t> group2;
-                            for (uint32_t i = range.first; i < range.second; ++i) {
-
-                                auto id = indices[i];
-                                auto& pt = points[id];
-                                bool nearerCenter1 = dot(coefs.data(), pt.data()) >= offset;
-                                if (nearerCenter1) {
-                                    group1.push_back(id);
-                                } else {
-                                    group2.push_back(id);
-                                }
-                            }
-
-                            if (group1.empty() || group2.empty()) {
-                                goto begin_kmeans;
-                            }
-
-
-                            // build ranges
-                            uint32_t subRange1Start = range.first;
-                            uint32_t subRange2Start = range.first + group1.size();
-                            Range subRange1 = {subRange1Start, subRange1Start + group1.size()};
-                            Range subRange2 = {subRange2Start, subRange2Start + group2.size()};
-                            std::memcpy(indices.data() + subRange1Start, group1.data(), group1.size() * sizeof(uint32_t));
-                            std::memcpy(indices.data() + subRange2Start, group2.data(), group2.size() * sizeof(uint32_t));
-                            {
-                                std::lock_guard<std::mutex> guard(stack_mtx);
-                                stack.push_back(subRange1);
-                                stack.push_back(subRange2);
-                            }
-                        }
-                    }
-                }
-
-            });
-        }
-        for (auto& thread: threads) { thread.join(); }
-
-    #ifdef PRINT_OUTPUT
-        std::cout << "group knn time: " << duration_cast<milliseconds>(hclock::now() - startKnn).count() << '\n';
-    #endif
-    }
-
     static pair<Vec, Vec> kmeansStartVecs(Range& range, float points[][104]) {
         uint32_t rangeSize = range.second - range.first;
         uint32_t sampleSize = pow(log10(rangeSize), 2.5); // 129 samples for 10m bucket, 16 samples for bucket of 1220
@@ -360,6 +219,7 @@ struct KmeansSolution {
     }
 
 
+    // handle both point vector data and array data
     static void splitKmeansBinaryTbb(Range range,
                               uint32_t knnIterations,
                               uint32_t maxGroupSize,
@@ -403,7 +263,7 @@ struct KmeansSolution {
                             auto& [agg1, agg2] = agg.local();
                             for (uint32_t i = r.begin(); i < r.end(); ++i) {
                                 auto id = indices[i];
-                                auto& pt = points[id];
+                                auto pt = std::begin(points[id]);
                                 bool nearerCenter1 = dot(coefs.data(), pt) >= offset;
                                 auto& aggToUse = nearerCenter1 ? agg1 : agg2;
                                 aggToUse.first++;
@@ -486,10 +346,10 @@ struct KmeansSolution {
         }
     }
 
-    static void splitSortKnnForAdjacency(vector<Vec>& pointsRead, std::vector<uint32_t>& newToOldIndices, float points[][104], uint32_t numThreads, uint32_t numPoints, tbb::concurrent_vector<Range>& ranges) {
+    static void splitSortKnnForAdjacency(float pointsRead[][104], std::vector<uint32_t>& newToOldIndices, float points[][104], uint32_t numThreads, uint32_t numPoints, tbb::concurrent_vector<Range>& ranges) {
         auto startAdjacencySort = hclock::now();
         std::iota(newToOldIndices.begin(), newToOldIndices.end(), 0);
-        splitKmeansBinaryAdjacency(1, 1000, numPoints, pointsRead, ranges, newToOldIndices);
+        splitKmeansBinaryTbb({0, numPoints}, 1, 1000, pointsRead, newToOldIndices, ranges);
         vector<Range> moveRanges = splitRange({0, numPoints}, numThreads);
         vector<std::thread> threads;
         for (uint32_t t = 0; t < numThreads; ++t) {
@@ -497,34 +357,33 @@ struct KmeansSolution {
                 auto moveRange = moveRanges[t];
                 for (uint32_t newIdx = moveRange.first; newIdx < moveRange.second; ++newIdx) {
                     auto oldIdx = newToOldIndices[newIdx];
-                    memcpy(points[newIdx], pointsRead[oldIdx].data(), sizeof(float) * dims);
+                    memcpy(points[newIdx], pointsRead[oldIdx], sizeof(float) * dims);
                 }
             });
         }
         for (auto& thread: threads) { thread.join(); }
 
-        pointsRead.clear();
+        delete[](pointsRead);
         auto adjacencySortDuration = duration_cast<milliseconds>(hclock::now() - startAdjacencySort).count();
     #ifdef PRINT_OUTPUT
         std::cout << "adjacency sort time: " << adjacencySortDuration << '\n';
     #endif
     }
 
-    static void constructResult(vector<Vec>& pointsRead, vector<vector<uint32_t>>& result) {
+    static void constructResult(float pointsRead[][104], uint32_t numPoints, vector<vector<uint32_t>>& result) {
 
         long timeBoundsMs;
         if(getenv("LOCAL_RUN")) {
             timeBoundsMs = 60'000;
         } else {
-            timeBoundsMs = pointsRead.size() == 10'000 ? 20'000 : 1'650'000;
+            timeBoundsMs = numPoints == 10'000 ? 20'000 : 1'650'000;
         }
 
     #ifdef PRINT_OUTPUT
         std::cout << "start run with time bound: " << timeBoundsMs << '\n';
     #endif
         auto startTime = hclock::now();
-        vector<KnnSetScannable> idToKnn(pointsRead.size());
-        uint32_t numPoints = pointsRead.size();
+        vector<KnnSetScannable> idToKnn(numPoints);
         auto numThreads = std::thread::hardware_concurrency();
 
         // rewrite point data in adjacent memory and sort in a group order

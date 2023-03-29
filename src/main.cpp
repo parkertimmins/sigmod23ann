@@ -4,7 +4,7 @@
 #include <chrono>
 #include "io.h"
 #include "ann.hpp"
-#include "KmeansSolution.hpp"
+#include "SolutionKmeans.hpp"
 
 
 /**
@@ -46,17 +46,15 @@ int main(int argc, char **argv) {
   }
 
   // Read data points
-  vector<Vec> nodes;
-
   auto startRead = hclock::now();
-  ReadBin(source_path, nodes);
+  auto [points, numPoints] = ReadBinArray(source_path);
 #ifdef PRINT_OUTPUT
   std::cout << "read time: " << duration_cast<milliseconds>(hclock::now() - startRead).count() << '\n';
 #endif
 
   // Knng constuction
-  vector<vector<uint32_t>> knng(nodes.size());
-  KmeansSolution::constructResult(nodes, knng);
+  vector<vector<uint32_t>> knng(numPoints);
+  SolutionKmeans::constructResult(points, numPoints, knng);
 
   // Save to ouput.bin
   auto startSave = hclock::now();
