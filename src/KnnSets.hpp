@@ -258,10 +258,11 @@ public:
 ///////////////////////////////////////////////////////////////////////////////////////////////
 // KnnSet related functions below
 ///////////////////////////////////////////////////////////////////////////////////////////////
+template<class TKnnSet>
 void addCandidates(float points[][104],
                    vector<uint32_t>& indices,
                    Range range,
-                   vector<KnnSetScannableSimd>& idToKnn) {
+                   vector<TKnnSet>& idToKnn) {
     for (uint32_t i=range.first; i < range.second-1; ++i) {
         auto id1 = indices[i];
         auto& knn1 = idToKnn[id1];

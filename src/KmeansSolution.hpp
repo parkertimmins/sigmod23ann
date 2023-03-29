@@ -523,7 +523,7 @@ struct KmeansSolution {
         std::cout << "start run with time bound: " << timeBoundsMs << '\n';
     #endif
         auto startTime = hclock::now();
-        vector<KnnSetScannableSimd> idToKnn(pointsRead.size());
+        vector<KnnSetScannable> idToKnn(pointsRead.size());
         uint32_t numPoints = pointsRead.size();
         auto numThreads = std::thread::hardware_concurrency();
 
