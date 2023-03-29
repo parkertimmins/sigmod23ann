@@ -4,8 +4,8 @@
 #include <chrono>
 #include "io.h"
 #include "ann.hpp"
-//#include "SolutionKmeans.hpp"
-#include "SolutionRandomKD.hpp"
+#include "SolutionKmeans.hpp"
+//#include "SolutionRandomKD.hpp"
 
 
 /**
@@ -55,7 +55,7 @@ int main(int argc, char **argv) {
 
   // Knng constuction
   vector<vector<uint32_t>> knng(numPoints);
-  SolutionRandomKD::constructResult(points, numPoints, knng);
+  SolutionKmeans::constructResult(points, numPoints, knng);
 
   // Save to ouput.bin
   auto startSave = hclock::now();
