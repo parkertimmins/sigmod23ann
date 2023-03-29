@@ -9,6 +9,7 @@
 #include <vector>
 #include <utility>
 #include "Constants.hpp"
+#include "LinearAlgebra.hpp"
 
 using std::pair;
 using std::vector;
@@ -253,6 +254,54 @@ public:
         return knn;
     }
 };
+
+///////////////////////////////////////////////////////////////////////////////////////////////
+// KnnSet related functions below
+///////////////////////////////////////////////////////////////////////////////////////////////
+void addCandidates(float points[][104],
+                   vector<uint32_t>& indices,
+                   Range range,
+                   vector<KnnSetScannableSimd>& idToKnn) {
+    for (uint32_t i=range.first; i < range.second-1; ++i) {
+        auto id1 = indices[i];
+        auto& knn1 = idToKnn[id1];
+        for (uint32_t j=i+1; j < range.second; ++j) {
+            auto id2 = indices[j];
+            float dist = distance(points[id1], points[id2]);
+            knn1.addCandidate(id2, dist);
+            idToKnn[id2].addCandidate(id1, dist);
+        }
+    }
+}
+
+vector<uint32_t> padResult(uint32_t numPoints, vector<vector<uint32_t>>& result) {
+    auto unusedId = 1;
+    vector<uint32_t> sizes(101);
+    for (uint32_t i=0; i < numPoints; ++i) {
+        sizes[result[i].size()]++;
+        while (result[i].size() < dims)  {
+            result[i].push_back(unusedId);
+        }
+    }
+    return sizes;
+}
+
+
+void addCandidatesGroup(float points[][104],
+                        vector<uint32_t>& group,
+                        vector<KnnSetScannable>& idToKnn) {
+    uint32_t groupSize = group.size();
+    for (uint32_t i = 0; i < groupSize-1; ++i) {
+        auto id1 = group[i];
+        auto& knn1 = idToKnn[id1];
+        for (uint32_t j=i+1; j < groupSize; ++j) {
+            auto id2 = group[j];
+            float dist = distance(points[id1], points[id2]);
+            knn1.addCandidate(id2, dist);
+            idToKnn[id2].addCandidate(id1, dist);
+        }
+    }
+}
 
 
 #endif //SIGMOD23ANN_KNNSETS_HPP
