@@ -577,7 +577,7 @@ struct SolutionKmeans {
                         addCandidatesThreadSafe(points, indices, range, idToKnn);
                     }
                     ranges.clear();
-                    auto processTime = duration_cast<milliseconds>(hclock::now() - startGroup).count();
+                    auto processTime = duration_cast<milliseconds>(hclock::now() - startProcess).count();
 
                     groupingTime += groupTime;
                     processGroupsTime += processTime;
