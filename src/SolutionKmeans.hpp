@@ -40,8 +40,8 @@ using std::vector;
 
 struct SolutionKmeans {
 
-    static inline uint64_t groupingTime = 0;
-    static inline uint64_t processGroupsTime = 0;
+    static inline std::atomic<uint64_t> groupingTime = 0;
+    static inline std::atomic<uint64_t> processGroupsTime = 0;
 
     static void splitKmeans(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints, float points[][104],
                             vector<Range> &ranges, vector<uint32_t> &indices) {
@@ -334,6 +334,92 @@ struct SolutionKmeans {
         }
     }
 
+
+
+    // handle both point vector data and array data
+    static void splitKmeansSingleThreaded(Range range,
+                              uint32_t knnIterations,
+                              uint32_t maxGroupSize,
+                              float points[][104],
+                              vector<uint32_t>& indices,
+                              vector<Range>& completed
+    ) {
+        uint32_t rangeSize = range.second - range.first;
+        if (rangeSize < maxGroupSize) {
+            completed.push_back(range);
+        } else {
+            begin_kmeans:
+
+            auto [center1, center2] = kmeansStartVecs(range, points, indices);
+
+            for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
+                auto between = scalarMult(0.5, add(center1, center2));
+                auto coefs = sub(center1, between);
+                auto offset = dot(between.data(), coefs.data());
+                // dot(x, coefs) >= offset means nearer to center1
+
+                using centroid_agg = pair<uint32_t, vector<double>>;
+                centroid_agg c1 = make_pair(0, vector<double>(100, 0.0));
+                centroid_agg c2 = make_pair(0, vector<double>(100, 0.0));
+                for (uint32_t i = range.first; i < range.second; ++i) {
+                    auto id = indices[i];
+                    auto pt = std::begin(points[id]);
+                    bool nearerCenter1 = dot(coefs.data(), pt) >= offset;
+                    if (nearerCenter1) {
+                        c1.first++;
+                        for (uint32_t j = 0; j < dims; ++j) { c1.second[j] += pt[j]; }
+                    } else {
+                        c2.first++;
+                        for (uint32_t j = 0; j < dims; ++j) { c2.second[j] += pt[j]; }
+                    }
+
+                }
+
+                if (c1.first == 0 || c2.first == 0) {
+                    goto begin_kmeans;
+                }
+
+                // recompute centers based on averages
+                for (uint32_t i = 0; i < dims; ++i) {
+                    center1[i] = c1.second[i] / c1.first;
+                    center2[i] = c2.second[i] / c2.first;
+                }
+            }
+
+            // compute final groups
+            auto between = scalarMult(0.5, add(center1, center2));
+            auto coefs = sub(center1, between);
+            auto offset = dot(between.data(), coefs.data());
+
+            vector<uint32_t> group1, group2;
+            for (uint32_t i = range.first; i < range.second; ++i) {
+                auto id = indices[i];
+                auto& pt = points[id];
+                bool nearerCenter1 = dot(coefs.data(), pt) >= offset;
+                auto& group = nearerCenter1 ? group1 : group2;
+                group.push_back(id);
+            }
+
+            if (group1.empty() || group2.empty()) {
+                goto begin_kmeans;
+            }
+
+            // build ranges
+            uint32_t subRange1Start = range.first;
+            uint32_t subRange2Start = range.first + group1.size();
+            Range subRange1 = {subRange1Start, subRange1Start + group1.size()};
+            Range subRange2 = {subRange2Start, subRange2Start + group2.size()};
+
+            auto it1 = indices.data() + subRange1Start;
+            std::memcpy(it1, group1.data(), group1.size() * sizeof(uint32_t));
+            auto it2 = indices.data() + subRange2Start;
+            std::memcpy(it2, group2.data(), group2.size() * sizeof(uint32_t));
+
+            splitKmeansSingleThreaded(subRange1, knnIterations, maxGroupSize, points, indices, completed);
+            splitKmeansSingleThreaded(subRange2, knnIterations, maxGroupSize, points, indices, completed);
+        }
+    }
+
     static void splitSortKnnForAdjacency(float pointsRead[][104], std::vector<uint32_t>& newToOldIndices, float points[][104], uint32_t numThreads, uint32_t numPoints, tbb::concurrent_vector<Range>& ranges) {
         auto startAdjacencySort = hclock::now();
         std::iota(newToOldIndices.begin(), newToOldIndices.end(), 0);
@@ -437,6 +523,75 @@ struct SolutionKmeans {
                 ni = newToOldIndices[ni];
             }
             result[newToOldIndices[id]] = std::move(newIdxResultRow);
+        }
+
+        auto sizes = padResult(numPoints, result);
+
+    #ifdef PRINT_OUTPUT
+        for (uint32_t i=0; i < sizes.size(); ++i) {
+            std::cout << "size: " << i << ", count: " << sizes[i] << '\n';
+        }
+        std::cout << "total grouping time (ms): " << groupingTime << '\n';
+        std::cout << "total processing time (ms): " << processGroupsTime << '\n';
+    #endif
+    }
+
+    static void constructResultHighLevelParallelism(float points[][104], uint32_t numPoints, vector<vector<uint32_t>>& result) {
+
+        long timeBoundsMs;
+        if(getenv("LOCAL_RUN")) {
+            timeBoundsMs = 60'000;
+        } else {
+            timeBoundsMs = numPoints == 10'000 ? 20'000 : 1'650'000;
+        }
+
+    #ifdef PRINT_OUTPUT
+        std::cout << "start run with time bound: " << timeBoundsMs << '\n';
+    #endif
+        auto startTime = hclock::now();
+        vector<KnnSetScannable> idToKnn(numPoints);
+        auto numThreads = std::thread::hardware_concurrency();
+
+        vector<vector<uint32_t>> indicesPerThread(numThreads);
+        for (auto& indices : indicesPerThread) {
+            std::iota(indices.begin(), indices.end(), 0);
+        }
+
+        std::atomic<uint32_t> iteration = 0;
+        vector<std::thread> threads;
+        for (uint32_t t = 0; t < numThreads; ++t) {
+            threads.emplace_back([&]() {
+                vector<uint32_t> indices(numPoints);
+                std::iota(indices.begin(), indices.end(), 0);
+                vector<Range> ranges;
+
+                while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
+                    auto currIteration = iteration++;
+
+                    auto startGroup = hclock::now();
+                    splitKmeansSingleThreaded({0, numPoints}, 1, 400, points, indices, ranges);
+                    auto groupTime = duration_cast<milliseconds>(hclock::now() - startGroup).count();
+
+                    auto startProcess = hclock::now();
+                    for (auto& range : ranges) {
+                        addCandidatesThreadSafe(points, indices, range, idToKnn);
+                    }
+                    ranges.clear();
+                    auto processTime = duration_cast<milliseconds>(hclock::now() - startGroup).count();
+
+                    groupingTime += groupTime;
+                    processGroupsTime += processTime;
+                    std::cout << "iteration: " << currIteration << ", thread: " << t << ", group: " << groupTime << ", process: " << processTime << "\n";
+
+                }
+            });
+        }
+
+        for (auto& thread: threads) { thread.join(); }
+
+
+        for (uint32_t id = 0; id < numPoints; ++id) {
+            result[id] = idToKnn[id].finalize();
         }
 
         auto sizes = padResult(numPoints, result);

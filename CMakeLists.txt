@@ -22,7 +22,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -fPIC -Wall -Wextra -fno-omit-frame-
 
 
 file(GLOB srcFiles "src/*.hpp" "src/*.cpp")
-add_library(lib_ann ${srcFiles})
+add_library(lib_ann ${srcFiles} src/Spinlock.hpp)
 add_executable(sigmod23ann src/main.cpp)
 target_link_libraries(sigmod23ann lib_ann TBB::tbb)
 

@@ -10,6 +10,7 @@
 #include <utility>
 #include "Constants.hpp"
 #include "LinearAlgebra.hpp"
+#include "Spinlock.hpp"
 
 using std::pair;
 using std::vector;
@@ -129,7 +130,8 @@ struct KnnSetScannable {
 public:
     vector<pair<float, uint32_t>> queue;
     uint32_t size = 0;
-    float lower_bound = 0; // 0 -> max val in first 100 -> decreases
+    std::atomic<float> lower_bound = 0; // 0 -> max val in first 100 -> decreases
+    Spinlock lock;
 
     KnnSetScannable() {
         queue.resize(k);
@@ -155,7 +157,7 @@ public:
         if (size < k) {
             if (!contains(candidate_id)) {
                 append({dist, candidate_id});
-                lower_bound = std::max(lower_bound, dist);
+                lower_bound = std::max(lower_bound.load(), dist);
             }
         } else if (dist < lower_bound) {
             float secondMaxVal = std::numeric_limits<float>::min();
@@ -271,6 +273,29 @@ void addCandidates(float points[][104],
             float dist = distance(points[id1], points[id2]);
             knn1.addCandidate(id2, dist);
             idToKnn[id2].addCandidate(id1, dist);
+        }
+    }
+}
+
+void addCandidatesThreadSafe(float points[][104],
+                   vector<uint32_t>& indices,
+                   Range range,
+                   vector<KnnSetScannable>& idToKnn) {
+    for (uint32_t i=range.first; i < range.second-1; ++i) {
+        auto id1 = indices[i];
+        auto& knn1 = idToKnn[id1];
+        for (uint32_t j=i+1; j < range.second; ++j) {
+            auto id2 = indices[j];
+            auto& knn2 = idToKnn[id2];
+            float dist = distance(points[id1], points[id2]);
+
+            knn1.lock.lock();
+            knn1.addCandidate(id2, dist);
+            knn1.lock.unlock();
+
+            knn2.lock.lock();
+            knn2.addCandidate(id1, dist);
+            knn2.lock.unlock();
         }
     }
 }
