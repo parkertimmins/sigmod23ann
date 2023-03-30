@@ -19,7 +19,7 @@ using Vec = aligned_vector<float>;
 
 #define PRINT_OUTPUT
 
-std::default_random_engine rd(123);
+thread_local std::mt19937_64 rd(1234);
 const uint32_t dims = 100;
 const uint32_t k = 100;
 
