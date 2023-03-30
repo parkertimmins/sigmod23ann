@@ -23,6 +23,7 @@
 #include "Constants.hpp"
 #include <cblas.h>
 
+using std::vector;
 
 
 float distance(const float* lhs, const float* rhs) {
