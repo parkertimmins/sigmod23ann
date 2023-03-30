@@ -157,7 +157,7 @@ public:
         if (size < k) {
             if (!contains(candidate_id)) {
                 append({dist, candidate_id});
-                lower_bound = std::max(lower_bound.load(), dist);
+                lower_bound = std::max(lower_bound, dist);
             }
         } else if (dist < lower_bound) {
             float secondMaxVal = std::numeric_limits<float>::min();
