@@ -22,6 +22,7 @@
 #include <immintrin.h>
 #include "Constants.hpp"
 
+using std::vector;
 
 
 float distance128(const float* lhs, const float* rhs) {

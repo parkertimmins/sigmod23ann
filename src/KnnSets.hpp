@@ -126,14 +126,145 @@ public:
 
 
 
-struct KnnSetScannable {
+struct KnnSetScannable{
+public:
+    vector<pair<float, uint32_t>> queue;
+    uint32_t size = 0;
+    float lower_bound = 0; // 0 -> max val in first 100 -> decreases
+
+    KnnSetScannable() {
+        queue.resize(k);
+    }
+
+    bool contains(uint32_t node) {
+        for (uint32_t i = 0; i < size; ++i) {
+            auto id = queue[i].second;
+            if (id == node) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void append(pair<float, uint32_t> nodePair) {
+        queue[size] = std::move(nodePair);
+        size++;
+    }
+
+    // This may misorder nodes of equal sizes
+    void addCandidate(const uint32_t candidate_id, float dist) {
+        if (size < k) {
+            if (!contains(candidate_id)) {
+                append({dist, candidate_id});
+                lower_bound = std::max(lower_bound, dist);
+            }
+        } else if (dist < lower_bound) {
+            float secondMaxVal = std::numeric_limits<float>::min();
+            float maxVal = std::numeric_limits<float>::min();
+            uint32_t maxIdx = -1;
+            for (uint32_t i = 0; i < size; ++i) {
+                auto& [otherDist, id] = queue[i];
+                if (id == candidate_id) {
+                    return;
+                }
+
+                if (otherDist > maxVal) {
+                    secondMaxVal = maxVal;
+                    maxVal = otherDist;
+                    maxIdx = i;
+                } else if (otherDist > secondMaxVal) {
+                    secondMaxVal = otherDist;
+                }
+            }
+
+            queue[maxIdx] = {dist, candidate_id};
+            lower_bound = std::max(secondMaxVal, dist);
+        }
+    }
+
+    void merge(vector<pair<float, uint32_t>>& left,
+               vector<pair<float, uint32_t>>& right,
+               vector<pair<float, uint32_t>>& output) {
+
+        // l and r point to next items to insert
+        uint32_t l = 0;
+        uint32_t r = 0;
+
+        // out points to next insert point
+        uint32_t out = 0;
+
+        auto rightSize = size;
+        if (!left.empty() && rightSize > 0) {
+            if (left[l] <= right[r]) {
+                output[out++] = left[l++];
+            } else {
+                output[out++] = right[r++];
+            }
+        } else if (!left.empty()) {
+            output[out++] = left[l++];
+        } else if (rightSize > 0) {
+            output[out++] = right[r++];
+        } else {
+            size = out;
+            return;
+        }
+
+        while (out < k && (l < left.size() || r < rightSize)) {
+            if (l < left.size() && r < rightSize) {
+                if (left[l] == output[out - 1]) {
+                    l++;
+                } else if (right[r] == output[out - 1]) {
+                    r++;
+                } else if (left[l] <= right[r]) {
+                    output[out++] = left[l++];
+                } else {
+                    output[out++] = right[r++];
+                }
+            } else if (l < left.size()) {
+                while (out < k && l < left.size())  {
+                    if (left[l] == output[out - 1]) {
+                        l++;
+                    } else {
+                        output[out++] = left[l++];
+                    }
+                }
+            } else {
+                while (out < k && r < rightSize)  {
+                    if (right[r] == output[out - 1]) {
+                        r++;
+                    } else {
+                        output[out++] = right[r++];
+                    }
+                }
+            }
+        }
+        size = out;
+    }
+
+    void mergeCandidates(vector<pair<float, uint32_t>>& distPairCache, vector<pair<float, uint32_t>>& outQueue) {
+        merge(distPairCache, queue, outQueue);
+        std::swap(queue, outQueue);
+    }
+
+    vector<uint32_t> finalize() {
+        std::sort(queue.begin(), queue.begin() + size);
+        vector<uint32_t> knn;
+        for (uint32_t i = 0; i < size; ++i) {
+            knn.push_back(queue[i].second);
+        }
+        return knn;
+    }
+};
+
+
+struct KnnSetScannableLocked {
 public:
     vector<pair<float, uint32_t>> queue;
     uint32_t size = 0;
     float lower_bound = 0; // 0 -> max val in first 100 -> decreases
     Spinlock lock;
 
-    KnnSetScannable() {
+    KnnSetScannableLocked() {
         queue.resize(k);
     }
 
@@ -280,7 +411,7 @@ void addCandidates(float points[][104],
 void addCandidatesThreadSafe(float points[][104],
                    vector<uint32_t>& indices,
                    Range range,
-                   vector<KnnSetScannable>& idToKnn) {
+                   vector<KnnSetScannableLocked>& idToKnn) {
     for (uint32_t i=range.first; i < range.second-1; ++i) {
         auto id1 = indices[i];
         auto& knn1 = idToKnn[id1];

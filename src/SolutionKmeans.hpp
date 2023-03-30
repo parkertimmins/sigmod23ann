@@ -574,7 +574,7 @@ struct SolutionKmeans {
 
                     auto startProcess = hclock::now();
                     for (auto& range : ranges) {
-                        addCandidatesThreadSafe(points, indices, range, idToKnn);
+//                        addCandidatesThreadSafe(points, indices, range, idToKnn);
                     }
                     ranges.clear();
                     auto processTime = duration_cast<milliseconds>(hclock::now() - startProcess).count();
