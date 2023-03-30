@@ -560,7 +560,7 @@ struct SolutionKmeans {
         std::atomic<uint32_t> iteration = 0;
         vector<std::thread> threads;
         for (uint32_t t = 0; t < numThreads; ++t) {
-            threads.emplace_back([&]() {
+            threads.emplace_back([&, t]() {
                 vector<uint32_t> indices(numPoints);
                 std::iota(indices.begin(), indices.end(), 0);
                 vector<Range> ranges;

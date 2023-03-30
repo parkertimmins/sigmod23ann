@@ -130,7 +130,7 @@ struct KnnSetScannable {
 public:
     vector<pair<float, uint32_t>> queue;
     uint32_t size = 0;
-    std::atomic<float> lower_bound = 0; // 0 -> max val in first 100 -> decreases
+    float lower_bound = 0; // 0 -> max val in first 100 -> decreases
     Spinlock lock;
 
     KnnSetScannable() {
@@ -289,13 +289,22 @@ void addCandidatesThreadSafe(float points[][104],
             auto& knn2 = idToKnn[id2];
             float dist = distance(points[id1], points[id2]);
 
-            knn1.lock.lock();
-            knn1.addCandidate(id2, dist);
-            knn1.lock.unlock();
+            if (knn1.lock.try_lock()) {
+                knn1.addCandidate(id2, dist);
+                knn1.lock.unlock();
 
-            knn2.lock.lock();
-            knn2.addCandidate(id1, dist);
-            knn2.lock.unlock();
+                knn2.lock.lock();
+                knn2.addCandidate(id1, dist);
+                knn2.lock.unlock();
+            } else {
+                knn2.lock.lock();
+                knn2.addCandidate(id1, dist);
+                knn2.lock.unlock();
+
+                knn1.lock.lock();
+                knn1.addCandidate(id1, dist);
+                knn1.lock.unlock();
+            }
         }
     }
 }
