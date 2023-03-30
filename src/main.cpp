@@ -37,7 +37,6 @@ using hclock = std::chrono::high_resolution_clock;
 using std::vector;
 
 int main(int argc, char **argv) {
-  openblas_set_num_threads(1);
   auto startTime = hclock::now();
 
   string source_path = "dummy-data.bin";
