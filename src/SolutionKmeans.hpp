@@ -185,7 +185,7 @@ struct SolutionKmeans {
 
     static pair<Vec, Vec> kmeansStartVecs(Range& range, float points[][104], vector<uint32_t>& indices) {
         uint32_t rangeSize = range.second - range.first;
-        uint32_t sampleSize = pow(log10(rangeSize), 3.5); // 129 samples for 10m bucket, 16 samples for bucket of 1220
+        uint32_t sampleSize = pow(log10(rangeSize), 2.5); // 129 samples for 10m bucket, 16 samples for bucket of 1220
         vector<uint32_t> idSample;
         idSample.reserve(sampleSize);
         std::uniform_int_distribution<uint32_t> distribution(range.first, range.second-1);
