@@ -233,6 +233,66 @@ struct SolutionKmeans {
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize) {
             addCandidates(points, indices, range, idToKnn);
+        } else if (rangeSize < 3'000) { // last two splits single threaded in hope of maintain cache locality
+            begin_kmeans_small:
+
+            auto [center1, center2] = kmeansStartVecs(range, points, indices);
+
+            for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
+                auto between = scalarMult(0.5, add(center1, center2));
+                auto coefs = sub(center1, between);
+                auto offset = dot(between.data(), coefs.data());
+                // dot(x, coefs) >= offset means nearer to center1
+
+                using centroid_agg = pair<uint32_t, vector<double>>;
+                centroid_agg c1 = make_pair(0, vector<double>(100, 0.0));
+                centroid_agg c2 = make_pair(0, vector<double>(100, 0.0));
+                for (uint32_t i = range.first; i < range.second; ++i) {
+                    auto id = indices[i];
+                    auto pt = std::begin(points[id]);
+                    bool nearerCenter1 = dot(coefs.data(), pt) >= offset;
+                    if (nearerCenter1) {
+                        c1.first++;
+                        for (uint32_t j = 0; j < dims; ++j) { c1.second[j] += pt[j]; }
+                    } else {
+                        c2.first++;
+                        for (uint32_t j = 0; j < dims; ++j) { c2.second[j] += pt[j]; }
+                    }
+
+                }
+
+                if (c1.first == 0 || c2.first == 0) {
+                    goto begin_kmeans_small;
+                }
+
+                // recompute centers based on averages
+                for (uint32_t i = 0; i < dims; ++i) {
+                    center1[i] = c1.second[i] / c1.first;
+                    center2[i] = c2.second[i] / c2.first;
+                }
+            }
+
+            // compute final groups
+            auto between = scalarMult(0.5, add(center1, center2));
+            auto coefs = sub(center1, between);
+            auto offset = dot(between.data(), coefs.data());
+
+            auto indicesBegin = indices.begin() + range.first;
+            auto indicesEnd = indices.begin() + range.second;
+            auto middleIt = std::partition(indicesBegin, indicesEnd, [&](uint32_t id) {
+                return dot(coefs.data(), points[id]) >= offset;
+            });
+            auto range1Size = middleIt - indicesBegin;
+            auto range2Size = indicesEnd - middleIt;
+            Range lo = {range.first, range.first + range1Size};
+            Range hi = {range.first + range1Size , range.second};
+
+            if (range1Size == 0 || range2Size == 0) {
+                goto begin_kmeans_small;
+            }
+
+            splitKmeansBinaryProcess(lo, knnIterations, maxGroupSize, points, indices, idToKnn);
+            splitKmeansBinaryProcess(hi, knnIterations, maxGroupSize, points, indices, idToKnn);
         } else {
             begin_kmeans:
 
