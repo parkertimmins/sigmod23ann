@@ -43,6 +43,8 @@ struct SolutionKmeans {
     static inline std::atomic<uint64_t> groupingTime = 0;
     static inline std::atomic<uint64_t> processGroupsTime = 0;
 
+    static inline std::atomic<uint64_t> groupProcessTime = 0;
+
     static void splitKmeans(uint32_t knnIterations, uint32_t maxGroupSize, uint32_t numPoints, float points[][104],
                             vector<Range> &ranges, vector<uint32_t> &indices) {
 
@@ -233,7 +235,7 @@ struct SolutionKmeans {
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize) {
             addCandidates(points, indices, range, idToKnn);
-        } else if (rangeSize < 3'000) { // last two splits single threaded in hope of maintain cache locality
+        } else if (rangeSize < 10'000) { // last two splits single threaded in hope of maintain cache locality
             begin_kmeans_small:
 
             auto [center1, center2] = kmeansStartVecs(range, points, indices);
@@ -646,12 +648,12 @@ struct SolutionKmeans {
             std::cout << "Iteration: " << iteration << '\n';
     #endif
             if (!first) {
-                auto startGroup = hclock::now();
+                auto startGroupProcess = hclock::now();
                 splitKmeansBinaryProcess({0, numPoints}, 1, 400, points, indices, idToKnn);
 
-                auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
+                auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroupProcess).count();
                 std::cout << " group/process time: " << groupDuration << '\n';
-                groupingTime += groupDuration;
+                groupProcessTime += groupDuration;
             } else {
                 vector<std::thread> threads;
                 std::atomic<uint32_t> count = 0;
@@ -691,8 +693,7 @@ struct SolutionKmeans {
         for (uint32_t i=0; i < sizes.size(); ++i) {
             std::cout << "size: " << i << ", count: " << sizes[i] << '\n';
         }
-        std::cout << "total grouping time (ms): " << groupingTime << '\n';
-        std::cout << "total processing time (ms): " << processGroupsTime << '\n';
+        std::cout << "total grouping/process time (ms): " << groupProcessTime << '\n';
     #endif
     }
 
