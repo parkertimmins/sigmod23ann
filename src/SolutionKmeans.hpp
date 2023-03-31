@@ -235,7 +235,7 @@ struct SolutionKmeans {
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize) {
             addCandidates(points, indices, range, idToKnn);
-        } else if (rangeSize < 10'000) { // last two splits single threaded in hope of maintain cache locality
+        } else if (rangeSize < 3'000) { // last two splits single threaded in hope of maintain cache locality
             begin_kmeans_small:
 
             auto [center1, center2] = kmeansStartVecs(range, points, indices);
