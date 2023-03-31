@@ -24,6 +24,7 @@
 #include "KnnSets.hpp"
 #include "LinearAlgebra.hpp"
 #include "Utility.hpp"
+#include <ranges>
 
 
 using std::cout;
@@ -39,9 +40,6 @@ using std::pair;
 using std::vector;
 
 struct SolutionKmeans {
-
-    static inline std::atomic<uint64_t> groupingTime = 0;
-    static inline std::atomic<uint64_t> processGroupsTime = 0;
 
     static inline std::atomic<uint64_t> groupProcessTime = 0;
 
@@ -185,6 +183,24 @@ struct SolutionKmeans {
 #endif
     }
 
+
+    static float calcSamplePercent(uint32_t min, uint32_t max) {
+        uint32_t rangeSize = max - min;
+        return pow(log(rangeSize) / log(30), 7) / rangeSize; // 0.005 for 1e7, around 10% for 10k
+    }
+
+    static vector<uint32_t> getSampleFromPercent(float perc, uint32_t min, uint32_t max) {
+        uint32_t rangeSize = max - min;
+        uint32_t sampleSize = rangeSize * perc;
+        vector<uint32_t> sample;
+        sample.reserve(sampleSize);
+        std::uniform_int_distribution<uint32_t> distribution(min, max-1);
+        while (sample.size() < sampleSize) {
+            sample.push_back(distribution(rd));
+        }
+        return sample;
+    }
+
     static pair<Vec, Vec> kmeansStartVecs(Range& range, float points[][104], vector<uint32_t>& indices) {
         uint32_t rangeSize = range.second - range.first;
         uint32_t sampleSize = pow(log10(rangeSize), 2.5); // 129 samples for 10m bucket, 16 samples for bucket of 1220
@@ -222,8 +238,6 @@ struct SolutionKmeans {
         return make_pair(center1, center2);
     }
 
-
-
     // handle both point vector data and array data
     static void splitKmeansBinaryProcess(Range range,
                                      uint32_t knnIterations,
@@ -248,18 +262,23 @@ struct SolutionKmeans {
                 using centroid_agg = pair<uint32_t, vector<double>>;
                 centroid_agg c1 = make_pair(0, vector<double>(100, 0.0));
                 centroid_agg c2 = make_pair(0, vector<double>(100, 0.0));
-                for (uint32_t i = range.first; i < range.second; ++i) {
-                    auto id = indices[i];
-                    auto pt = std::begin(points[id]);
-                    bool nearerCenter1 = dot(coefs.data(), pt) >= offset;
-                    if (nearerCenter1) {
-                        c1.first++;
-                        for (uint32_t j = 0; j < dims; ++j) { c1.second[j] += pt[j]; }
-                    } else {
-                        c2.first++;
-                        for (uint32_t j = 0; j < dims; ++j) { c2.second[j] += pt[j]; }
-                    }
 
+                float percSample = calcSamplePercent(range.first, range.second);
+                if (percSample >= 0.1) {
+                    for (uint32_t i = range.first; i < range.second; ++i) {
+                        auto& pt = points[indices[i]];
+                        centroid_agg& ca = dot(coefs.data(), pt) >= offset ? c1 : c2;
+                        ca.first++;
+                        for (uint32_t j = 0; j < dims; ++j) { ca.second[j] += pt[j]; }
+                    }
+                } else {
+                    auto sample = getSampleFromPercent(percSample, range.first, range.second);
+                    for (auto& i : sample) {
+                        auto& pt = points[indices[i]];
+                        centroid_agg& ca = dot(coefs.data(), pt) >= offset ? c1 : c2;
+                        ca.first++;
+                        for (uint32_t j = 0; j < dims; ++j) { ca.second[j] += pt[j]; }
+                    }
                 }
 
                 if (c1.first == 0 || c2.first == 0) {
@@ -305,19 +324,28 @@ struct SolutionKmeans {
                 auto offset = dot(between.data(), coefs.data());
                 // dot(x, coefs) >= offset means nearer to center1
 
+                float percSample = calcSamplePercent(range.first, range.second);
+
                 using centroid_agg = pair<uint32_t, vector<double>>;
                 tbb::combinable<pair<centroid_agg, centroid_agg>> agg(make_pair(make_pair(0, vector<double>(100, 0.0f)), make_pair(0, vector<double>(100, 0.0f))));
                 tbb::parallel_for(
                         tbb::blocked_range<uint32_t>(range.first, range.second),
                         [&](oneapi::tbb::blocked_range<uint32_t> r) {
                             auto& [agg1, agg2] = agg.local();
-                            for (uint32_t i = r.begin(); i < r.end(); ++i) {
-                                auto id = indices[i];
-                                auto pt = std::begin(points[id]);
-                                bool nearerCenter1 = dot(coefs.data(), pt) >= offset;
-                                auto& aggToUse = nearerCenter1 ? agg1 : agg2;
-                                aggToUse.first++;
-                                for (uint32_t j = 0; j < dims; ++j) { aggToUse.second[j] += pt[j]; }
+                            if (percSample >= 0.1) {
+                                for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                                    auto& pt = points[indices[i]];
+                                    auto& aggToUse = dot(coefs.data(), pt) >= offset ? agg1 : agg2;
+                                    aggToUse.first++;
+                                    for (uint32_t j = 0; j < dims; ++j) { aggToUse.second[j] += pt[j]; }
+                                }
+                            } else {
+                                for (auto& i : getSampleFromPercent(percSample, r.begin(), r.end())) {
+                                    auto& pt = points[indices[i]];
+                                    auto& aggToUse = dot(coefs.data(), pt) >= offset ? agg1 : agg2;
+                                    aggToUse.first++;
+                                    for (uint32_t j = 0; j < dims; ++j) { aggToUse.second[j] += pt[j]; }
+                                }
                             }
                         }
                 );
@@ -358,8 +386,7 @@ struct SolutionKmeans {
                         for (uint32_t i = r.begin(); i < r.end(); ++i) {
                             auto id = indices[i];
                             auto& pt = points[id];
-                            bool nearerCenter1 = dot(coefs.data(), pt) >= offset;
-                            auto& group = nearerCenter1 ? g1 : g2;
+                            auto& group = dot(coefs.data(), pt) >= offset ? g1 : g2;
                             group.push_back(id);
                         }
                     }
@@ -390,13 +417,11 @@ struct SolutionKmeans {
             std::memcpy(it2, group2.data(), group2.size() * sizeof(uint32_t));
 
             tbb::parallel_invoke(
-                    [&]{ splitKmeansBinaryProcess(subRange1, knnIterations, maxGroupSize, points, indices, idToKnn); },
-                    [&]{ splitKmeansBinaryProcess(subRange2, knnIterations, maxGroupSize, points, indices, idToKnn); }
+                [&]{ splitKmeansBinaryProcess(subRange1, knnIterations, maxGroupSize, points, indices, idToKnn); },
+                [&]{ splitKmeansBinaryProcess(subRange2, knnIterations, maxGroupSize, points, indices, idToKnn); }
             );
         }
     }
-
-
 
     static void constructResult(float points[][104], uint32_t numPoints, vector<vector<uint32_t>>& result) {
 
