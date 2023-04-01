@@ -304,6 +304,23 @@ struct SolutionKmeans {
     }
 
 
+    static bool contains(vector<uint32_t>& currIds, uint32_t candidateId) {
+        __m256i pattern = _mm256_set1_epi32(candidateId);
+        auto* ids = currIds.data();
+
+        size_t limit = (currIds.size() / 8) * 8;
+        for (uint32_t i = 0; i < limit; i+=8) {
+            auto block = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(ids));
+            auto match = _mm256_movemask_epi8(_mm256_cmpeq_epi32(pattern, block));
+            if (match) { return true; }
+            ids += 8;
+        }
+        for (uint32_t i = limit; i < currIds.size(); ++i) {
+            if (currIds[i] == candidateId) { return true; }
+        }
+        return false;
+    }
+
 
     static void topUp(float points[][104], vector<KnnSetScannable>& idToKnn) {
         auto startTopup = hclock::now();
@@ -329,15 +346,14 @@ struct SolutionKmeans {
             [&](oneapi::tbb::blocked_range<size_t> r) {
                 for (auto id1 = r.begin(); id1 < r.end(); ++id1) {
                     auto& knn = knnIds[id1];
-//                    std::unordered_set<uint32_t> triedSet(knn.begin(), knn.end());
-//                    triedSet.insert(id1);
 
                     auto& knnSet = idToKnn[id1];
                     for (auto& id2 : knnIds[id1]) {
                         auto &knn2 = knnIds[id2];
                         for (auto& id3: knnIds[id2]) {
-                            if (id3 != id1) { //&& !std::binary_search(knn.begin(), knn.end(), id3)) { //{} && !knn.contains(id3)) { // set.find(id3) == set.end()) {
+                            if (id3 != id1) { // && !contains(knn, id3)) { //&& !std::binary_search(knn.begin(), knn.end(), id3)) { //{} && !knn.contains(id3)) { // set.find(id3) == set.end()) {
                                 float dist = distance(points[id3], points[id1]);
+//                                knnSet.addCandidateSkipContains(id3, dist);
                                 knnSet.addCandidate(id3, dist);
                             }
                         }
@@ -367,7 +383,7 @@ struct SolutionKmeans {
         std::vector<uint32_t> indices(numPoints);
 
         uint32_t iteration = 0;
-        while (iteration < 150) {
+        while (iteration < 3) {
 //        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
     #ifdef PRINT_OUTPUT
             std::cout << "Iteration: " << iteration << '\n';
@@ -384,7 +400,7 @@ struct SolutionKmeans {
         }
 
 
-//        topUp(points, idToKnn);
+        topUp(points, idToKnn);
 
         for (uint32_t id = 0; id < numPoints; ++id) {
             result[id] = idToKnn[id].finalize();
