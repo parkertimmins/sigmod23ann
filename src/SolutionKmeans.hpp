@@ -351,9 +351,9 @@ struct SolutionKmeans {
                     for (auto& id2 : knnIds[id1]) {
                         auto &knn2 = knnIds[id2];
                         for (auto& id3: knnIds[id2]) {
-                            if (id3 != id1  && !contains(knn, id3)) {
+                            if (id3 != id1) { //  && !contains(knn, id3)) {
                                 float dist = distance(points[id3], points[id1]);
-                                knnSet.addCandidateSkipContains(id3, dist);
+                                knnSet.addCandidate(id3, dist);
                             }
                         }
                     }
@@ -382,7 +382,7 @@ struct SolutionKmeans {
         std::vector<uint32_t> indices(numPoints);
 
         uint32_t iteration = 0;
-        while (iteration < 3) {
+        while (iteration < 150) {
 //        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
     #ifdef PRINT_OUTPUT
             std::cout << "Iteration: " << iteration << '\n';
