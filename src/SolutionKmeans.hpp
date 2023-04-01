@@ -462,7 +462,7 @@ struct SolutionKmeans {
     #endif
             std::iota(indices.begin(), indices.end(), 0);
             auto startGroupProcess = hclock::now();
-            splitKmeansBinaryProcess({0, numPoints}, 1, 200, points, indices, idToKnn);
+            splitKmeansBinaryProcess({0, numPoints}, 1, 400, points, indices, idToKnn);
 
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroupProcess).count();
             std::cout << " group/process time: " << groupDuration << '\n';
