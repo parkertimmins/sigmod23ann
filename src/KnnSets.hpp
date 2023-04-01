@@ -11,6 +11,7 @@
 #include "Constants.hpp"
 #include "LinearAlgebra.hpp"
 #include "Spinlock.hpp"
+#include "oneapi/tbb.h"
 
 using std::pair;
 using std::vector;
@@ -235,6 +236,27 @@ public:
         }
     }
 
+    void addCandidateSkipContains(const uint32_t candidate_id, float dist) {
+        if (dist < lower_bound) {
+            float secondMaxVal = std::numeric_limits<float>::min();
+            float maxVal = std::numeric_limits<float>::min();
+            uint32_t maxIdx = -1;
+            for (uint32_t i = 0; i < size; ++i) {
+                auto& [otherDist, id] = queue[i];
+                if (otherDist > maxVal) {
+                    secondMaxVal = maxVal;
+                    maxVal = otherDist;
+                    maxIdx = i;
+                } else if (otherDist > secondMaxVal) {
+                    secondMaxVal = otherDist;
+                }
+            }
+
+            queue[maxIdx] = {dist, candidate_id};
+            lower_bound = std::max(secondMaxVal, dist);
+        }
+    }
+
     void merge(vector<pair<float, uint32_t>>& left,
                vector<pair<float, uint32_t>>& right,
                vector<pair<float, uint32_t>>& output) {
@@ -358,6 +380,7 @@ void addCandidatesGroup(float points[][104],
         }
     }
 }
+
 
 
 #endif //SIGMOD23ANN_KNNSETS_HPP
