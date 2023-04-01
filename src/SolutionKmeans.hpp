@@ -201,6 +201,41 @@ struct SolutionKmeans {
         return sample;
     }
 
+    static pair<Vec, Vec> kmeansStartVecs(vector<uint32_t>& sampleRange, Range& range, float points[][104], vector<uint32_t>& indices) {
+        uint32_t rangeSize = range.second - range.first;
+        uint32_t sampleSizeforStarts = pow(log10(rangeSize), 2.5); // 129 samples for 10m bucket, 16 samples for bucket of 1220
+        uint32_t sampleSize = std::min(static_cast<uint32_t>(sampleRange.size()), sampleSizeforStarts);
+
+        auto sampleRangeStart = sampleRange.begin();
+        auto sampleRangeEnd = sampleRange.begin() + sampleSize;
+
+        float maxDist = std::numeric_limits<float>::min();
+        float* pii = nullptr;
+        float* pjj = nullptr;
+        for (auto i = sampleRangeStart; i < sampleRangeEnd - 1; ++i) {
+            for (auto j = i + 1; j < sampleRangeEnd; ++j) {
+                float* pi = points[indices[*i]];
+                float* pj = points[indices[*j]];
+                float dist = distance(pi, pj);
+                if (dist > maxDist) {
+                    maxDist = dist;
+                    pii = pi;
+                    pjj = pj;
+                }
+            }
+        }
+
+        // copy points into Vec objects
+        Vec center1(dims);
+        Vec center2(dims);
+        // TODO use copy as memcpy not safe
+        for (uint32_t i = 0; i < dims; ++i) {
+            center1[i]  = pii[i];
+            center2[i]  = pjj[i];
+        }
+        return make_pair(center1, center2);
+    }
+
     static pair<Vec, Vec> kmeansStartVecs(Range& range, float points[][104], vector<uint32_t>& indices) {
         uint32_t rangeSize = range.second - range.first;
         uint32_t sampleSize = pow(log10(rangeSize), 2.5); // 129 samples for 10m bucket, 16 samples for bucket of 1220
@@ -263,22 +298,11 @@ struct SolutionKmeans {
                 centroid_agg c1 = make_pair(0, vector<double>(100, 0.0));
                 centroid_agg c2 = make_pair(0, vector<double>(100, 0.0));
 
-                float percSample = calcSamplePercent(range.first, range.second);
-                if (percSample >= 0.1) {
-                    for (uint32_t i = range.first; i < range.second; ++i) {
-                        auto& pt = points[indices[i]];
-                        centroid_agg& ca = dot(coefs.data(), pt) >= offset ? c1 : c2;
-                        ca.first++;
-                        for (uint32_t j = 0; j < dims; ++j) { ca.second[j] += pt[j]; }
-                    }
-                } else {
-                    auto sample = getSampleFromPercent(percSample, range.first, range.second);
-                    for (auto& i : sample) {
-                        auto& pt = points[indices[i]];
-                        centroid_agg& ca = dot(coefs.data(), pt) >= offset ? c1 : c2;
-                        ca.first++;
-                        for (uint32_t j = 0; j < dims; ++j) { ca.second[j] += pt[j]; }
-                    }
+                for (uint32_t i = range.first; i < range.second; ++i) {
+                    auto& pt = points[indices[i]];
+                    centroid_agg& ca = dot(coefs.data(), pt) >= offset ? c1 : c2;
+                    ca.first++;
+                    for (uint32_t j = 0; j < dims; ++j) { ca.second[j] += pt[j]; }
                 }
 
                 if (c1.first == 0 || c2.first == 0) {
@@ -316,7 +340,11 @@ struct SolutionKmeans {
         } else {
             begin_kmeans:
 
-            auto [center1, center2] = kmeansStartVecs(range, points, indices);
+            float percSample = calcSamplePercent(range.first, range.second);
+            auto sampleRange = getSampleFromPercent(percSample, range.first, range.second);
+
+//            std::cout << "rangeSize: " << rangeSize << ", sampleSize: " << sampleRange.size() << "\n";
+            auto [center1, center2] = kmeansStartVecs(sampleRange, range, points, indices);
 
             for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
                 auto between = scalarMult(0.5, add(center1, center2));
@@ -324,30 +352,20 @@ struct SolutionKmeans {
                 auto offset = dot(between.data(), coefs.data());
                 // dot(x, coefs) >= offset means nearer to center1
 
-                float percSample = calcSamplePercent(range.first, range.second);
 
                 using centroid_agg = pair<uint32_t, vector<double>>;
                 tbb::combinable<pair<centroid_agg, centroid_agg>> agg(make_pair(make_pair(0, vector<double>(100, 0.0f)), make_pair(0, vector<double>(100, 0.0f))));
                 tbb::parallel_for(
-                        tbb::blocked_range<uint32_t>(range.first, range.second),
-                        [&](oneapi::tbb::blocked_range<uint32_t> r) {
-                            auto& [agg1, agg2] = agg.local();
-                            if (percSample >= 0.1) {
-                                for (uint32_t i = r.begin(); i < r.end(); ++i) {
-                                    auto& pt = points[indices[i]];
-                                    auto& aggToUse = dot(coefs.data(), pt) >= offset ? agg1 : agg2;
-                                    aggToUse.first++;
-                                    for (uint32_t j = 0; j < dims; ++j) { aggToUse.second[j] += pt[j]; }
-                                }
-                            } else {
-                                for (auto& i : getSampleFromPercent(percSample, r.begin(), r.end())) {
-                                    auto& pt = points[indices[i]];
-                                    auto& aggToUse = dot(coefs.data(), pt) >= offset ? agg1 : agg2;
-                                    aggToUse.first++;
-                                    for (uint32_t j = 0; j < dims; ++j) { aggToUse.second[j] += pt[j]; }
-                                }
-                            }
+                    tbb::blocked_range<size_t>(0, sampleRange.size()),
+                    [&](oneapi::tbb::blocked_range<size_t> r) {
+                        auto& [agg1, agg2] = agg.local();
+                        for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                            auto& pt = points[indices[sampleRange[i]]];
+                            auto& aggToUse = dot(coefs.data(), pt) >= offset ? agg1 : agg2;
+                            aggToUse.first++;
+                            for (uint32_t j = 0; j < dims; ++j) { aggToUse.second[j] += pt[j]; }
                         }
+                    }
                 );
                 auto [c1_agg, c2_agg] = agg.combine([](const pair<centroid_agg, centroid_agg>& x, const pair<centroid_agg, centroid_agg>& y) {
                     centroid_agg c1{0, vector<double>(100, 0.0f)};
@@ -380,16 +398,16 @@ struct SolutionKmeans {
             using groups = pair<vector<uint32_t>, vector<uint32_t>>;
             tbb::combinable<groups> groupsAgg(make_pair<>(vector<uint32_t>(), vector<uint32_t>()));
             tbb::parallel_for(
-                    tbb::blocked_range<uint32_t>(range.first, range.second),
-                    [&](tbb::blocked_range<uint32_t> r) {
-                        auto& [g1, g2] = groupsAgg.local();
-                        for (uint32_t i = r.begin(); i < r.end(); ++i) {
-                            auto id = indices[i];
-                            auto& pt = points[id];
-                            auto& group = dot(coefs.data(), pt) >= offset ? g1 : g2;
-                            group.push_back(id);
-                        }
+                tbb::blocked_range<uint32_t>(range.first, range.second),
+                [&](tbb::blocked_range<uint32_t> r) {
+                    auto& [g1, g2] = groupsAgg.local();
+                    for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                        auto id = indices[i];
+                        auto& pt = points[id];
+                        auto& group = dot(coefs.data(), pt) >= offset ? g1 : g2;
+                        group.push_back(id);
                     }
+                }
             );
             auto [group1, group2] = groupsAgg.combine([](const groups& x, const groups& y) {
                 vector<uint32_t> g1;
@@ -432,20 +450,17 @@ struct SolutionKmeans {
     #endif
         auto startTime = hclock::now();
         vector<KnnSetScannable> idToKnn(numPoints);
-        auto numThreads = std::thread::hardware_concurrency();
 
         // rewrite point data in adjacent memory and sort in a group order
         std::vector<uint32_t> indices(numPoints);
 
-        bool first = true;
-
         uint32_t iteration = 0;
-//        while (iteration < 150) {
-        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
-            std::iota(indices.begin(), indices.end(), 0);
+        while (iteration < 150) {
+//        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
     #ifdef PRINT_OUTPUT
             std::cout << "Iteration: " << iteration << '\n';
     #endif
+            std::iota(indices.begin(), indices.end(), 0);
             auto startGroupProcess = hclock::now();
             splitKmeansBinaryProcess({0, numPoints}, 1, 400, points, indices, idToKnn);
 
