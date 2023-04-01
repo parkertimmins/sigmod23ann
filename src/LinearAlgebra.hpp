@@ -25,28 +25,27 @@
 using std::vector;
 
 
-float distance128(const float* lhs, const float* rhs) {
-    __m128 sum  = _mm_set1_ps(0);
-    auto* r = rhs;
-    auto* l = lhs;
-    for (uint32_t i = 0; i < dims; i+=4) {
-        __m128 rs = _mm_load_ps(r);
-        __m128 ls = _mm_load_ps(l);
-        __m128 diff = _mm_sub_ps(ls, rs);
-        __m128 prod = _mm_mul_ps(diff, diff);
-        sum = _mm_add_ps(sum, prod);
-        l += 4;
-        r += 4;
-    }
 
-    float sums[4] = {};
-    _mm_store_ps(sums, sum);
-    float ans = 0.0f;
-    for (float s: sums) {
-        ans += s;
+
+float distancePartial(vector<uint32_t>& dimensions, const float* lhs, const float* rhs) {
+    float sumDiffs = 0;
+    for (auto& i : dimensions) {
+        float diff = lhs[i] - rhs[i];
+        sumDiffs += diff * diff;
     }
-    return ans;
+    return sumDiffs;
 }
+
+float dotPartial(vector<uint32_t>& dimensions, const float* lhs, const float* rhs) {
+    float sum = 0;
+    for (auto& i : dimensions) {
+        sum += lhs[i] * rhs[i];
+    }
+    return sum;
+}
+
+
+
 
 
 float distance(const float* lhs, const float* rhs) {
@@ -150,29 +149,6 @@ Vec scalarMult(float c, const Vec& vec) {
     }
     return res;
 }
-
-float dot128(const float* lhs, const float* rhs) {
-    __m128 sum  = _mm_set1_ps(0);
-    auto* r = rhs;
-    auto* l = lhs;
-    for (uint32_t i = 0; i < dims; i+=4) {
-        __m128 rs = _mm_load_ps(r);
-        __m128 ls = _mm_load_ps(l);
-        __m128 prod = _mm_mul_ps(rs, ls);
-        sum = _mm_add_ps(sum, prod);
-        l += 4;
-        r += 4;
-    }
-    float sums[4] = {};
-    _mm_store_ps(sums, sum);
-    float ans = 0.0f;
-    for (float s: sums) {
-        ans += s;
-    }
-    return ans;
-}
-
-
 
 float dot(const float* lhs, const float* rhs) {
     __m256 sum  = _mm256_set1_ps(0);

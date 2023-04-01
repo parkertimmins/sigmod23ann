@@ -5,6 +5,7 @@
 #include "io.h"
 #include "ann.hpp"
 #include "SolutionKmeans.hpp"
+#include "SolutionKmeansPartialDims.hpp"
 //#include "SolutionRandomKD.hpp"
 
 

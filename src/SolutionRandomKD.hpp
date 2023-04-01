@@ -1,3 +1,25 @@
+#ifndef SIGMOD23ANN_SOLUTIORANDOMKD_HPP
+#define SIGMOD23ANN_SOLUTIORANDOMKD_HPP
+
+#include <iostream>
+#include <numeric>
+#include <string>
+#include <utility>
+#include <vector>
+#include <algorithm>
+#include <queue>
+#include <random>
+#include <unordered_map>
+#include <unordered_set>
+#include <cstdint>
+#include <chrono>
+#include <thread>
+#include <optional>
+#include <mutex>
+#include <limits>
+#include <cstring>
+#include <deque>
+#include <emmintrin.h>
 #include <iostream>
 #include <numeric>
 #include <string>
@@ -357,3 +379,5 @@ struct SolutionRandomKD {
     #endif
     }
 };
+
+#endif //SIGMOD23ANN_SOLUTIORANDOMKD_HPP
