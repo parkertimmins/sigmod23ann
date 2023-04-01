@@ -326,17 +326,21 @@ struct SolutionKmeans {
         auto startTopup = hclock::now();
         uint32_t numPoints = idToKnn.size();
 
-        vector<vector<uint32_t>> knnIds;
-        knnIds.reserve(numPoints);
-        for (uint32_t id = 0; id < numPoints; ++id) {
-            vector<uint32_t> ids;
-            ids.reserve(100);
-            for (auto &[dist, id2] : idToKnn[id].queue) {
-                ids.push_back(id2);
+        vector<vector<uint32_t>> knnIds(numPoints);
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, numPoints),
+            [&](oneapi::tbb::blocked_range<size_t> r) {
+                for (auto id = r.begin(); id < r.end(); ++id) {
+                    vector<uint32_t> ids;
+                    ids.reserve(100);
+                    for (auto &[dist, id2] : idToKnn[id].queue) {
+                        ids.push_back(id2);
+                    }
+                    std::sort(ids.begin(), ids.end());
+                    knnIds[id] = std::move(ids);
+                }
             }
-            std::sort(ids.begin(), ids.end());
-            knnIds.push_back(std::move(ids));
-        }
+        );
 
         std::cout << "top copy idKnnSet time: " << duration_cast<milliseconds>(hclock::now() - startTopup).count() << "\n";
 
@@ -351,12 +355,28 @@ struct SolutionKmeans {
                     for (auto& id2 : knnIds[id1]) {
                         auto &knn2 = knnIds[id2];
                         for (auto& id3: knnIds[id2]) {
-                            if (id3 != id1  && !contains(knn, id3)) {
+                            if (id3 != id1) {
                                 float dist = distance(points[id3], points[id1]);
-                                knnSet.addCandidateSkipContains(id3, dist);
+                                knnSet.addCandidate(id3, dist);
                             }
                         }
                     }
+
+//                    auto& knn = knnIds[id1];
+//                    auto& knnSet = idToKnn[id1];
+//                    std::unordered_set<uint32_t> candidates;
+//                    for (auto& id2 : knnIds[id1]) {
+//                        for (auto& id3: knnIds[id2]) {
+//                            candidates.insert(id3);
+//                        }
+//                    }
+//
+//                    for (auto& id3 : candidates) {
+//                        if (id3 != id1  && !contains(knn, id3)) {
+//                            float dist = distance(points[id3], points[id1]);
+//                            knnSet.addCandidateSkipContains(id3, dist);
+//                        }
+//                    }
 
                     auto currCount = count++;
                     if (currCount % 10'000 == 0) {
@@ -399,6 +419,7 @@ struct SolutionKmeans {
         }
 
 
+        topUp(points, idToKnn);
         topUp(points, idToKnn);
 
         for (uint32_t id = 0; id < numPoints; ++id) {
