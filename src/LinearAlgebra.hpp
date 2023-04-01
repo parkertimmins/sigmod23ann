@@ -48,6 +48,7 @@ float dotPartial(vector<uint32_t>& dimensions, const float* lhs, const float* rh
 
 
 
+
 float distance(const float* lhs, const float* rhs) {
     __m256 sum  = _mm256_set1_ps(0);
     auto* r = rhs;
@@ -99,13 +100,12 @@ Vec normalize(const Vec& vec) {
 }
 
 Vec randUniformUnitVec(size_t dim=dims) {
-    std::mt19937 gen(rd());
     std::normal_distribution<> normalDist(0, 1);
 
     Vec randVec;
     randVec.reserve(dim);
     while (randVec.size() < dim) {
-        auto elementValue = normalDist(gen);
+        auto elementValue = normalDist(rd);
         randVec.emplace_back(elementValue);
     }
 
@@ -113,7 +113,29 @@ Vec randUniformUnitVec(size_t dim=dims) {
     normalizeInPlace(randVec);
     return randVec;
 }
+void plusEq(Vec& lhs, const Vec& rhs) {
+    for (uint32_t i = 0; i < 100; ++i) {
+        lhs[i] += rhs[i];
+    }
+}
+void plusEq(float* lhs, float* rhs) {
+    for (uint32_t i = 0; i < 100; ++i) {
+        lhs[i] += rhs[i];
+    }
+}
 
+//void plusEq(Vec& lhs, const Vec& rhs) {
+//    auto* r = const_cast<float*>(rhs.data());
+//    auto* l = const_cast<float*>(lhs.data());
+//    for (uint32_t i = 0; i < 100; i+=4) {
+//        __m128 ls = _mm_load_ps(l);
+//        __m128 rs = _mm_load_ps(r);
+//        __m128 sum = _mm_add_ps(ls, rs);
+//        _mm_store_ps(l, sum);
+//        l += 4;
+//        r += 4;
+//    }
+//}
 
 Vec add(const Vec& lhs, const Vec& rhs) {
     auto dim = lhs.size();
@@ -193,6 +215,45 @@ vector<Vec> gramSchmidt(vector<Vec>& v) {
         u[i] = normalize(u[i]);
     }
     return u;
+}
+
+Vec getMeans(float points[][104], vector<uint32_t>& indices, vector<uint32_t>& sampleRange) {
+    uint32_t dim = 100;
+    uint32_t numRows = sampleRange.size();
+    vector<float> sums(dim, 0);
+    for (auto& i : sampleRange) {
+        float* v = points[indices[i]];
+        plusEq(sums.data(), v);
+    }
+
+    Vec means;
+    for (auto& sum : sums) {
+        means.push_back(sum / numRows);
+    }
+    return means;
+}
+
+Vec calcPCA1(float points[][104], vector<uint32_t>& indices, vector<uint32_t>& sampleRange) {
+    auto means = getMeans(points, indices, sampleRange);
+    auto r = randUniformUnitVec();
+    for (auto c = 0; c < 3; ++c) {
+        Vec s(100, 0);
+        for (auto& i : sampleRange) {
+            float* v = points[indices[i]];
+            auto x = sub(v, means.data());
+            plusEq(s, scalarMult(dot(x.data(), r.data()), x));
+        }
+        normalizeInPlace(s);
+        r = s;
+
+//        std::cout << "elapsed: " << duration_cast<milliseconds>(hclock::now() - start).count() << std::endl;
+//        std::cout << "pca, iteration: " << c << std::endl;
+//        std::cout << "error norm: " << norm(error) << std::endl;
+//        std::cout << "error: "; print(error);
+//        std::cout << "r: "; print(r);
+//        std::cout << std::endl;
+    }
+    return r;
 }
 
 #endif //SIGMOD23ANN_LINEARALGEBRA_HPP
