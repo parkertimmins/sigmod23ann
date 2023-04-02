@@ -11,12 +11,71 @@
 #include "Constants.hpp"
 #include "LinearAlgebra.hpp"
 #include "Spinlock.hpp"
+#include <tsl/robin_set.h>
 #include "oneapi/tbb.h"
 
 using std::pair;
 using std::vector;
 using std::queue;
 
+
+
+struct KnnSet {
+public:
+    vector<pair<float, uint32_t>> queue;
+    tsl::robin_set<uint32_t> set;
+    uint32_t size = 0;
+    float lower_bound = std::numeric_limits<float>::max();
+    public:
+    KnnSet() {
+        queue.resize(101);
+    }
+
+    bool contains(uint32_t node) {
+        return set.contains(node);
+    }
+
+    pair<float, uint32_t>& top() {
+        return queue[0];
+    }
+
+    void push(pair<float, uint32_t> nodePair) {
+        set.insert(nodePair.second);
+        queue[size] = std::move(nodePair);
+        size++;
+        std::push_heap(queue.begin(), queue.begin() + size);
+    }
+
+    void pop() {
+        std::pop_heap(queue.begin(), queue.begin() + size);
+        auto toRemove = queue.back().second;
+        set.erase(toRemove);
+        size--;
+    }
+
+    void addCandidate(const uint32_t candidate_id, float dist) {
+        if (size < 100) {
+            if (!contains(candidate_id)) {
+                push(std::make_pair(dist, candidate_id));
+                lower_bound = top().first;
+            }
+        } else if (dist < lower_bound && !contains(candidate_id)) {
+            push(std::make_pair(dist, candidate_id));
+            pop();
+            lower_bound = top().first;
+        }
+    }
+
+    vector<uint32_t> finalize() {
+        vector<uint32_t> knn;
+        while (size) {
+            knn.emplace_back(top().second);
+            pop();
+        }
+        std::reverse(knn.begin(), knn.end());
+        return knn;
+    }
+};
 
 struct KnnSetScannableSimd {
 public:

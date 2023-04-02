@@ -142,7 +142,7 @@ struct SolutionKmeans {
                                      uint32_t maxGroupSize,
                                      float points[][104],
                                      vector<uint32_t>& indices,
-                                     vector<KnnSetScannable>& idToKnn
+                                     vector<KnnSet>& idToKnn
     ) {
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize) {
@@ -304,7 +304,7 @@ struct SolutionKmeans {
         }
     }
 
-    static void topUp(float points[][104], vector<KnnSetScannable>& idToKnn) {
+    static void topUp(float points[][104], vector<KnnSet>& idToKnn) {
         auto startTopup = hclock::now();
         uint32_t numPoints = idToKnn.size();
 
@@ -363,7 +363,7 @@ struct SolutionKmeans {
         std::cout << "start run with time bound: " << timeBoundsMs << '\n';
     #endif
         auto startTime = hclock::now();
-        vector<KnnSetScannable> idToKnn(numPoints);
+        vector<KnnSet> idToKnn(numPoints);
 
         // rewrite point data in adjacent memory and sort in a group order
         std::vector<uint32_t> indices(numPoints);
@@ -401,6 +401,37 @@ struct SolutionKmeans {
         std::cout << "total grouping/process time (ms): " << groupProcessTime << '\n';
     #endif
     }
+
+//    static void topUpOneAtATime(float points[][104], vector<KnnSet>& idToKnn) {
+//        auto startTopup = hclock::now();
+//        uint32_t numPoints = idToKnn.size();
+//
+//        std::atomic<uint32_t> count = 0;
+//        for (uint32_t id1 = 0; id1 < numPoints; ++id1) {
+//            auto& knnSet = idToKnn[id1];
+//            tbb::parallel_for(
+//                tbb::blocked_range<size_t>(0, knnSet.queue.size()),
+//                [&](oneapi::tbb::blocked_range<size_t> r) {
+//                    for (auto i = r.begin(); i < r.end(); ++i) {
+//                        auto id2 = knnSet.queue[i].second;
+//
+//                        for (auto& [d3, id3] : idToKnn[id2].queue) {
+//                            if (id3 != id1) {
+//                                float dist = distance(points[id3], points[id1]);
+//                                knnSet.addCandidate(id3, dist);
+//                            }
+//                        }
+//                    }
+//                }
+//            );
+//            auto currCount = count++;
+//            if (currCount % 10'000 == 0) {
+//                auto topupTime = duration_cast<milliseconds>(hclock::now() - startTopup).count();
+//                std::cout << "topped up: " << currCount << ", timing topping up:" << topupTime << "\n";
+//            }
+//        }
+//    }
+
 
 };
 #endif //SIGMOD23ANN_SOLUTIONKMEANS_HPP

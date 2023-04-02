@@ -20,6 +20,8 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Ofast -fPIC -Wall -Wextra -fno-omit-fra
 
 
 add_subdirectory(thirdparty/robin-map)
+#add_subdirectory(thirdparty/hopscotch-map)
+#add_subdirectory(thirdparty/sparse-map)
 
 file(GLOB srcFiles "src/*.hpp" "src/*.cpp")
 add_library(lib_ann ${srcFiles})
