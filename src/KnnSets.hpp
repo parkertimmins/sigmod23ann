@@ -13,16 +13,18 @@
 #include "Spinlock.hpp"
 #include <tsl/robin_set.h>
 #include "oneapi/tbb.h"
+#include <tuple>
 
 using std::pair;
 using std::vector;
 using std::queue;
+using std::tuple;
 
 
 
 struct KnnSet {
 public:
-    vector<pair<float, uint32_t>> queue;
+    vector<tuple<float, uint32_t, bool>> queue;
     tsl::robin_set<uint32_t> set;
     uint32_t size = 0;
     float lower_bound = std::numeric_limits<float>::max();
@@ -35,20 +37,20 @@ public:
         return set.contains(node);
     }
 
-    pair<float, uint32_t>& top() {
+    tuple<float, uint32_t, bool>& top() {
         return queue[0];
     }
 
-    void push(pair<float, uint32_t> nodePair) {
-        set.insert(nodePair.second);
-        queue[size] = std::move(nodePair);
+    void push(float dist, uint32_t id, bool known) {
+        set.insert(id);
+        queue[size] = {dist, id, known};
         size++;
         std::push_heap(queue.begin(), queue.begin() + size);
     }
 
     void pop() {
         std::pop_heap(queue.begin(), queue.begin() + size);
-        auto toRemove = queue.back().second;
+        auto toRemove = get<1>(queue.back());
         set.erase(toRemove);
         size--;
     }
@@ -56,20 +58,51 @@ public:
     void addCandidate(const uint32_t candidate_id, float dist) {
         if (size < 100) {
             if (!contains(candidate_id)) {
-                push(std::make_pair(dist, candidate_id));
-                lower_bound = top().first;
+                push(dist, candidate_id, true);
+                lower_bound = std::get<0>(top());
             }
         } else if (dist < lower_bound && !contains(candidate_id)) {
-            push(std::make_pair(dist, candidate_id));
+            push(dist, candidate_id, true);
             pop();
-            lower_bound = top().first;
+            lower_bound = std::get<0>(top());
         }
     }
+
+    void addCandidateBound(const uint32_t candidate_id, float dist, float points[][104] , uint32_t this_id) {
+        if (dist < lower_bound) {
+             if (contains(candidate_id)) {
+                 return;
+             }
+
+             push(dist, candidate_id, false);
+             while (true) {
+                std::pop_heap(queue.begin(), queue.begin() + size);
+                auto& toRemove = queue.back();
+                auto isBound = !get<2>(toRemove);
+                auto id = !get<1>(toRemove);
+                if (isBound) {
+                    float actualDist = distance(points[this_id], points[id]);
+                    toRemove = { actualDist, id, true };
+                    std::push_heap(queue.begin(), queue.begin() + size);
+                } else {
+                    set.erase(get<1>(queue.back()));
+                    size--;
+                    break;
+                }
+            }
+
+            lower_bound = std::get<0>(top());
+        } else {
+            float actualDist = distance(points[this_id], points[candidate_id]);
+            addCandidate(candidate_id, actualDist);
+        }
+    }
+
 
     vector<uint32_t> finalize() {
         vector<uint32_t> knn;
         while (size) {
-            knn.emplace_back(top().second);
+            knn.emplace_back(get<1>(top()));
             pop();
         }
         std::reverse(knn.begin(), knn.end());
@@ -240,7 +273,6 @@ public:
         return knn;
     }
 };
-
 
 
 

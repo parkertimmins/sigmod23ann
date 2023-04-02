@@ -28,7 +28,7 @@
 #include "LinearAlgebra.hpp"
 #include "Utility.hpp"
 #include <ranges>
-#include "tsl/robin_set.h"
+#include "tsl/robin_map.h"
 
 
 using std::cout;
@@ -142,7 +142,7 @@ struct SolutionKmeans {
                                      uint32_t maxGroupSize,
                                      float points[][104],
                                      vector<uint32_t>& indices,
-                                     vector<KnnSetScannable>& idToKnn
+                                     vector<KnnSet>& idToKnn
     ) {
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize) {
@@ -304,19 +304,19 @@ struct SolutionKmeans {
         }
     }
 
-    static void topUp(float points[][104], vector<KnnSetScannable>& idToKnn) {
+    static void topUp(float points[][104], vector<KnnSet>& idToKnn) {
         auto startTopup = hclock::now();
         uint32_t numPoints = idToKnn.size();
 
-        vector<vector<uint32_t>> knnIds(numPoints);
+        vector<vector<pair<uint32_t, float>>> knnIds(numPoints);
         tbb::parallel_for(
             tbb::blocked_range<size_t>(0, numPoints),
             [&](oneapi::tbb::blocked_range<size_t> r) {
                 for (auto id = r.begin(); id < r.end(); ++id) {
-                    vector<uint32_t> ids;
+                    vector<pair<uint32_t, float>> ids;
                     ids.reserve(100);
-                    for (auto &[dist, id2] : idToKnn[id].queue) {
-                        ids.push_back(id2);
+                    for (auto& [dist, id2, known] : idToKnn[id].queue) {
+                        ids.emplace_back(id2, dist);
                     }
                     std::sort(ids.begin(), ids.end());
                     knnIds[id] = std::move(ids);
@@ -330,18 +330,23 @@ struct SolutionKmeans {
         tbb::parallel_for(
             tbb::blocked_range<size_t>(0, numPoints),
             [&](oneapi::tbb::blocked_range<size_t> r) {
-                tsl::robin_set<uint32_t> candidates;
+                tsl::robin_map<uint32_t, float> candidates;
                 for (auto id1 = r.begin(); id1 < r.end(); ++id1) {
-                    auto& knn = knnIds[id1];
                     auto& knnSet = idToKnn[id1];
-                    for (auto& id2 : knnIds[id1]) {
-                        for (auto& id3: knnIds[id2]) { candidates.insert(id3); }
+                    for (auto& [id2, dist1To2] : knnIds[id1]) {
+                        for (auto& [id3, dist2To3] : knnIds[id2]) {
+                            auto it = candidates.find(id3);
+                            if (it == candidates.end()) {
+                                candidates[id3] = dist1To2 + dist2To3;
+                            } else {
+                                candidates[id3] = std::min(it->second, dist1To2 + dist2To3);
+                            }
+                        }
                     }
 
                     candidates.erase(id1);
-                    for (auto& id3 : candidates) {
-                        float dist = distance(points[id3], points[id1]);
-                        knnSet.addCandidate(id3, dist);
+                    for (auto& [id3, distBound] : candidates) {
+                        knnSet.addCandidateBound(id3, distBound, points , id1);
                     }
                     candidates.clear();
 
@@ -363,13 +368,13 @@ struct SolutionKmeans {
         std::cout << "start run with time bound: " << timeBoundsMs << '\n';
     #endif
         auto startTime = hclock::now();
-        vector<KnnSetScannable> idToKnn(numPoints);
+        vector<KnnSet> idToKnn(numPoints);
 
         // rewrite point data in adjacent memory and sort in a group order
         std::vector<uint32_t> indices(numPoints);
 
         uint32_t iteration = 0;
-//        while (iteration < 150) {
+//        while (iteration < 2) {
         while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
     #ifdef PRINT_OUTPUT
             std::cout << "Iteration: " << iteration << '\n';
