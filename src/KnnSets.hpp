@@ -249,10 +249,38 @@ public:
     vector<pair<float, uint32_t>> queue;
     uint32_t size = 0;
     float lower_bound = 0; // 0 -> max val in first 100 -> decreases
+//    vector<uint16_t> groups;
 
     KnnSetScannable() {
         queue.resize(k);
+//        groups.reserve(48);
     }
+
+//    void addGroup(uint16_t newGroup) {
+//        if (groups.size() < 48) {
+//            groups.push_back(newGroup);
+//        }
+//    }
+//
+//    bool previouslyChecked(vector<uint16_t>& other) {
+//        uint16_t* grpA = groups.data();
+//        uint16_t* grpB = other.data();
+//        auto limit = grpA + groups.size();
+//        while (grpA + 16 < limit) {
+//            auto a = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(grpA));
+//            auto b = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(grpB));
+//            auto match = _mm256_movemask_epi8(_mm256_cmpeq_epi32(a, b));
+//            if (match) { return true; }
+//            grpA += 16;
+//            grpB += 16;
+//        }
+//        while (grpA < limit) {
+//            if (*grpA == *grpB) { return true; }
+//            grpA++;
+//            grpB++;
+//        }
+//        return false;
+//    }
 
     bool contains(uint32_t node) {
         for (uint32_t i = 0; i < size; ++i) {
