@@ -142,3 +142,18 @@ TEST(KnnSetScannableSimd, finalize){
         ASSERT_EQ(i, finalResult[i]);
     }
 }
+
+
+TEST(contains, testDoesContainsMultiple8){
+    vector<uint32_t> ids = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
+    ASSERT_TRUE(contains(ids, 5));
+}
+
+TEST(contains, testDoesContainsNotMultiple8){
+    vector<uint32_t> ids = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    ASSERT_TRUE(contains(ids, 10));
+}
+TEST(contains, testDoesNotContain){
+    vector<uint32_t> ids = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+    ASSERT_FALSE(contains(ids, 123));
+}

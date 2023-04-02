@@ -303,25 +303,6 @@ struct SolutionKmeans {
         }
     }
 
-
-    static bool contains(vector<uint32_t>& currIds, uint32_t candidateId) {
-        __m256i pattern = _mm256_set1_epi32(candidateId);
-        auto* ids = currIds.data();
-
-        size_t limit = (currIds.size() / 8) * 8;
-        for (uint32_t i = 0; i < limit; i+=8) {
-            auto block = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(ids));
-            auto match = _mm256_movemask_epi8(_mm256_cmpeq_epi32(pattern, block));
-            if (match) { return true; }
-            ids += 8;
-        }
-        for (uint32_t i = limit; i < currIds.size(); ++i) {
-            if (currIds[i] == candidateId) { return true; }
-        }
-        return false;
-    }
-
-
     static void topUp(float points[][104], vector<KnnSetScannable>& idToKnn) {
         auto startTopup = hclock::now();
         uint32_t numPoints = idToKnn.size();
@@ -390,7 +371,7 @@ struct SolutionKmeans {
 
     static void constructResult(float points[][104], uint32_t numPoints, vector<vector<uint32_t>>& result) {
 
-        long timeBoundsMs = (getenv("LOCAL_RUN") || numPoints == 10'000)  ? 20'000 : 1'300'000;
+        long timeBoundsMs = (getenv("LOCAL_RUN") || numPoints == 10'000)  ? 20'000 : 1'200'000;
 
     #ifdef PRINT_OUTPUT
         std::cout << "start run with time bound: " << timeBoundsMs << '\n';

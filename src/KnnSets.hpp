@@ -381,6 +381,24 @@ void addCandidatesGroup(float points[][104],
     }
 }
 
+static bool contains(vector<uint32_t>& currIds, uint32_t candidateId) {
+    __m256i pattern = _mm256_set1_epi32(static_cast<int>(candidateId));
+    auto* ids = currIds.data();
+
+    auto limit = ids + currIds.size();
+    while (ids + 8 < limit) {
+        auto block = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(ids));
+        auto match = _mm256_movemask_epi8(_mm256_cmpeq_epi32(pattern, block));
+        if (match) { return true; }
+        ids += 8;
+    }
+    while (ids < limit) {
+        if (*ids == candidateId) { return true; }
+        ids++;
+    }
+    return false;
+}
+
 
 
 #endif //SIGMOD23ANN_KNNSETS_HPP
