@@ -80,8 +80,8 @@ public:
 struct KnnSetScannableSimd {
 public:
     alignas(sizeof(__m256)) float dists[100] = {};
-    alignas(sizeof(__m256)) uint32_t current_ids[100] = {};
     uint32_t size = 0;
+    alignas(sizeof(__m256)) uint32_t current_ids[100] = {};
     float lower_bound = 0; // 0 -> max val in first 100 -> decreases
     bool contains(uint32_t node) {
         for (uint32_t i = 0; i < size; ++i) {

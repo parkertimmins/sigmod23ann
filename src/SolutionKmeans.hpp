@@ -142,7 +142,7 @@ struct SolutionKmeans {
                                      uint32_t maxGroupSize,
                                      float points[][104],
                                      vector<uint32_t>& indices,
-                                     vector<KnnSet>& idToKnn
+                                     vector<KnnSetScannable>& idToKnn
     ) {
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize) {
@@ -304,7 +304,7 @@ struct SolutionKmeans {
         }
     }
 
-    static void topUp(float points[][104], vector<KnnSet>& idToKnn) {
+    static void topUp(float points[][104], vector<KnnSetScannable>& idToKnn) {
         auto startTopup = hclock::now();
         uint32_t numPoints = idToKnn.size();
 
@@ -363,7 +363,7 @@ struct SolutionKmeans {
         std::cout << "start run with time bound: " << timeBoundsMs << '\n';
     #endif
         auto startTime = hclock::now();
-        vector<KnnSet> idToKnn(numPoints);
+        vector<KnnSetScannable> idToKnn(numPoints);
 
         // rewrite point data in adjacent memory and sort in a group order
         std::vector<uint32_t> indices(numPoints);
@@ -376,7 +376,7 @@ struct SolutionKmeans {
     #endif
             std::iota(indices.begin(), indices.end(), 0);
             auto startGroupProcess = hclock::now();
-            splitKmeansBinaryProcess({0, numPoints}, 1, 400, points, indices, idToKnn);
+            splitKmeansBinaryProcess({0, numPoints}, 1, 200, points, indices, idToKnn);
 
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroupProcess).count();
             std::cout << " group/process time: " << groupDuration << '\n';
