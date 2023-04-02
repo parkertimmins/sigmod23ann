@@ -28,6 +28,7 @@
 #include "LinearAlgebra.hpp"
 #include "Utility.hpp"
 #include <ranges>
+#include "tsl/robin_set.h"
 
 
 using std::cout;
@@ -329,35 +330,20 @@ struct SolutionKmeans {
         tbb::parallel_for(
             tbb::blocked_range<size_t>(0, numPoints),
             [&](oneapi::tbb::blocked_range<size_t> r) {
+                tsl::robin_set<uint32_t> candidates;
                 for (auto id1 = r.begin(); id1 < r.end(); ++id1) {
                     auto& knn = knnIds[id1];
-
                     auto& knnSet = idToKnn[id1];
                     for (auto& id2 : knnIds[id1]) {
-                        auto &knn2 = knnIds[id2];
-                        for (auto& id3: knnIds[id2]) {
-                            if (id3 != id1) {
-                                float dist = distance(points[id3], points[id1]);
-                                knnSet.addCandidate(id3, dist);
-                            }
-                        }
+                        for (auto& id3: knnIds[id2]) { candidates.insert(id3); }
                     }
 
-//                    auto& knn = knnIds[id1];
-//                    auto& knnSet = idToKnn[id1];
-//                    std::unordered_set<uint32_t> candidates;
-//                    for (auto& id2 : knnIds[id1]) {
-//                        for (auto& id3: knnIds[id2]) {
-//                            candidates.insert(id3);
-//                        }
-//                    }
-//
-//                    for (auto& id3 : candidates) {
-//                        if (id3 != id1  && !contains(knn, id3)) {
-//                            float dist = distance(points[id3], points[id1]);
-//                            knnSet.addCandidateSkipContains(id3, dist);
-//                        }
-//                    }
+                    candidates.erase(id1);
+                    for (auto& id3 : candidates) {
+                        float dist = distance(points[id3], points[id1]);
+                        knnSet.addCandidate(id3, dist);
+                    }
+                    candidates.clear();
 
                     auto currCount = count++;
                     if (currCount % 10'000 == 0) {

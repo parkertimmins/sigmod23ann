@@ -19,12 +19,14 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Ofast -fPIC -Wall -Wextra -fno-omit-fra
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -Wall -Wextra -fno-omit-frame-pointer -march=native -Wno-unknown-pragmas -pthread -g")
 
 
-
+add_subdirectory(thirdparty/robin-map)
 
 file(GLOB srcFiles "src/*.hpp" "src/*.cpp")
-add_library(lib_ann ${srcFiles} src/Spinlock.hpp)
+add_library(lib_ann ${srcFiles})
+target_link_libraries(lib_ann tsl::robin_map)
+
 add_executable(sigmod23ann src/main.cpp)
-target_link_libraries(sigmod23ann lib_ann TBB::tbb)
+target_link_libraries(sigmod23ann lib_ann TBB::tbb tsl::robin_map)
 
 file(GLOB testFiles "test/*.hpp" "test/*.cpp")
 add_executable(tests test/TestMain.cpp ${testFiles})
