@@ -25,7 +25,6 @@ using std::tuple;
 struct KnnSet {
 public:
     vector<tuple<float, uint32_t, bool>> queue;
-    tsl::robin_set<uint32_t> set;
     uint32_t size = 0;
     float lower_bound = std::numeric_limits<float>::max();
     public:
@@ -34,7 +33,10 @@ public:
     }
 
     bool contains(uint32_t node) {
-        return set.contains(node);
+        for (auto& [dist, id, known] : queue) {
+            if (id == node) { return true; }
+        }
+        return false;
     }
 
     tuple<float, uint32_t, bool>& top() {
@@ -42,7 +44,6 @@ public:
     }
 
     void push(float dist, uint32_t id, bool known) {
-        set.insert(id);
         queue[size] = {dist, id, known};
         size++;
         std::push_heap(queue.begin(), queue.begin() + size);
@@ -50,8 +51,6 @@ public:
 
     void pop() {
         std::pop_heap(queue.begin(), queue.begin() + size);
-        auto toRemove = get<1>(queue.back());
-        set.erase(toRemove);
         size--;
     }
 
@@ -78,20 +77,19 @@ public:
              while (true) {
                 std::pop_heap(queue.begin(), queue.begin() + size);
                 auto& toRemove = queue.back();
-                auto isBound = !get<2>(toRemove);
-                auto id = !get<1>(toRemove);
+                bool isBound = !get<2>(toRemove);
+                uint32_t id = get<1>(toRemove);
                 if (isBound) {
                     float actualDist = distance(points[this_id], points[id]);
                     toRemove = { actualDist, id, true };
                     std::push_heap(queue.begin(), queue.begin() + size);
                 } else {
-                    set.erase(get<1>(queue.back()));
                     size--;
                     break;
                 }
             }
 
-            lower_bound = std::get<0>(top());
+            lower_bound = get<0>(top());
         } else {
             float actualDist = distance(points[this_id], points[candidate_id]);
             addCandidate(candidate_id, actualDist);
