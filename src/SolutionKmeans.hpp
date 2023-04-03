@@ -412,7 +412,7 @@ struct SolutionKmeans {
         }
 
         for (auto i = 0 ; i < 4; ++i) {
-            uint64_t nodesUpdates = topUp(points, idToKnn);
+            topUp(points, idToKnn);
 //            if (nodesUpdates < 50'000) { break; }
         }
 
