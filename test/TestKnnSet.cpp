@@ -3,77 +3,11 @@
 #include <utility>
 #include <random>
 
-/////////  KnnSet /////////////////////////////////////////////////////////
-TEST(KnnSet, containsNotFull){
-    KnnSet ks;
-    ks.push(0.1f, 99, true);
-    ASSERT_TRUE(ks.contains(99));
-    ASSERT_FALSE(ks.contains(100));
-}
-
-TEST(KnnSet, containsFull){
-    KnnSet ks;
-    for (uint32_t i = 0; i < 100; ++i) {
-        ks.push(0.01 * i, i, true);
-    }
-
-    ASSERT_TRUE(ks.contains(50));
-    ASSERT_FALSE(ks.contains(100));
-}
-
-TEST(KnnSet , lowerBoundSetOnFirst100){
-    KnnSet ks;
-
-    for (uint32_t i = 0; i < 100; ++i) {
-        ks.addCandidate(i, 0.01f * i);
-        ASSERT_FLOAT_EQ(ks.lower_bound, 0.01 * i);
-    }
-}
-
-TEST(KnnSet, lowerBoundSetAfter100){
-    KnnSet ks;
-
-    vector<pair<float, uint32_t>> data;
-    for (uint32_t i = 0; i < 100; ++i) {
-        data.emplace_back(0.01 * i, i);
-    }
-    std::default_random_engine rand(123);
-    std::shuffle(data.begin(), data.end(), rand);
-
-    for (auto& [dist, id] : data) {
-        ks.addCandidate(id, dist);
-    }
-
-    ks.addCandidate(100, 0.0001); // id not present, and small dist
-    ASSERT_FLOAT_EQ(ks.lower_bound, 0.01 * 98); // largest previous was removed;
-}
-
-TEST(KnnSet , finalize){
-    KnnSet ks;
-
-    // More than 100 items so exercise both paths
-    vector<pair<float, uint32_t>> data;
-    for (uint32_t i = 0; i < 1000; ++i) {
-        data.emplace_back(0.01 * i, i);
-    }
-    std::default_random_engine rand(123);
-    std::shuffle(data.begin(), data.end(), rand);
-
-    for (auto& [dist, id] : data) {
-        ks.addCandidate(id, dist);
-    }
-
-    auto finalResult = ks.finalize();
-    for (uint32_t i = 0; i < 100; ++i) {
-        ASSERT_EQ(i, finalResult[i]);
-    }
-}
-
 
 /////////  KnnSetScannable /////////////////////////////////////////////////////////
 TEST(KnnSetScannable, containsNotFull){
     KnnSetScannable ks;
-    ks.append(std::make_pair(0.1f, 99));
+    ks.append(0.1f, 99, true);
     ASSERT_TRUE(ks.contains(99));
     ASSERT_FALSE(ks.contains(100));
 }
@@ -81,7 +15,7 @@ TEST(KnnSetScannable, containsNotFull){
 TEST(KnnSetScannable, containsFull){
     KnnSetScannable ks;
     for (uint32_t i = 0; i < 100; ++i) {
-        ks.append(std::make_pair(0.01 * i, i));
+        ks.append(0.01 * i, i, true);
     }
 
     ASSERT_TRUE(ks.contains(50));
