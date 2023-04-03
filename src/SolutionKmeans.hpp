@@ -381,6 +381,104 @@ struct SolutionKmeans {
         return nodesUpdated.load();
     }
 
+    static uint32_t requiredHashFuncs(uint32_t numPoints, uint32_t maxBucketSize) {
+        uint32_t groupSize = numPoints;
+        uint32_t numHashFuncs = 0;
+        while (groupSize > maxBucketSize) {
+            groupSize /= 2;
+            numHashFuncs++;
+        }
+        return numHashFuncs;
+    }
+
+    // assume range size is at least numIndices
+    static float getSplitPoint(vector<vector<float>>& hashes, std::vector<uint32_t>& indices, Range range, uint32_t depth) {
+        auto rangeSize = range.second - range.first;
+
+        if (rangeSize < 5'000) {
+            auto [min, max] = getBounds(hashes, indices, range, depth);
+            return (min + max) / 2;
+        }
+
+        uint32_t numIndices = pow(log(rangeSize), 1.5);
+        std::unordered_set<uint32_t> randIndices;
+        std::uniform_int_distribution<> distribution(range.first, range.second - 1);
+        while (randIndices.size() < numIndices) {
+            uint32_t idx = distribution(rd);
+            randIndices.insert(idx);
+        }
+
+        auto [min, max] = startBounds;
+        for (auto idx : randIndices) {
+            auto id = indices[idx];
+            auto proj = hashes[id][depth];
+            min = std::min(min, proj);
+            max = std::max(max, proj);
+        }
+        return (min + max) / 2;
+    }
+
+    static void splitHorizontalRegroupProcess(vector<vector<float>>& hashes, vector<KnnSetScannable>& idToKnn, uint32_t depth, Range range, uint32_t maxGroupSize, uint32_t numHashFuncs, uint32_t numPoints, float points[][104], vector<uint32_t>& indices) {
+        uint32_t rangeSize = range.second - range.first;
+        if (rangeSize < maxGroupSize || depth == numHashFuncs) {
+            addCandidates(points, indices, range, idToKnn);
+        } else {
+            auto mid = getSplitPoint(hashes, indices, range, depth);
+            auto rangeBegin = indices.begin() + range.first;
+            auto rangeEnd = indices.begin() + range.second;
+            auto middleIt = std::partition(rangeBegin, rangeEnd, [&](uint32_t id) {
+                auto proj = hashes[id][depth];
+                return proj <= mid;
+            });
+            auto range1Size = middleIt - rangeBegin;
+            Range lo = {range.first, range.first + range1Size};
+            Range hi = {range.first + range1Size, range.second};
+            tbb::parallel_invoke(
+                [&] { splitHorizontalRegroupProcess(hashes, idToKnn, depth + 1, lo, maxGroupSize, numHashFuncs, numPoints, points, indices); },
+                [&] { splitHorizontalRegroupProcess(hashes, idToKnn, depth + 1, hi , maxGroupSize, numHashFuncs, numPoints, points, indices); }
+            );
+        }
+    }
+
+    static void splitHorizontal(vector<KnnSetScannable>& idToKnn, uint32_t maxGroupSize, uint32_t numHashFuncs, uint32_t numPoints, float points[][104], vector<uint32_t>& indices) {
+        auto numThreads = std::thread::hardware_concurrency();
+        auto hashRanges = splitRange({0, numPoints}, numThreads);
+        vector<vector<float>> hashes(numPoints);
+
+        vector<Vec> unitVecs(numHashFuncs);
+        for (uint32_t h = 0; h < numHashFuncs; ++h) {
+            unitVecs[h] = randUniformUnitVec();
+        }
+        unitVecs = gramSchmidt(unitVecs);
+
+        auto startHash = hclock::now();
+
+        // compute all hash function values
+        vector<std::thread> threads;
+        for (uint32_t t = 0; t < numThreads; ++t) {
+            threads.emplace_back([&, t]() {
+                auto range = hashRanges[t];
+                for (uint32_t i = range.first; i < range.second; ++i) {
+                    float *p = points[i];
+                    vector<float> &hashSet = hashes[i];
+                    for (uint32_t h = 0; h < numHashFuncs; ++h) {
+                        const auto &unitVec = unitVecs[h];
+                        float proj = dot(unitVec.data(), p);
+                        hashSet.push_back(proj);
+                    }
+                }
+            });
+        }
+        for (auto &thread: threads) { thread.join(); }
+
+        std::cout << "group hash time: " << duration_cast<milliseconds>(hclock::now() - startHash).count() << '\n';
+
+        auto startRegroup = hclock::now();
+        splitHorizontalRegroupProcess(hashes, idToKnn, 0, {0, numPoints}, maxGroupSize, numHashFuncs, numPoints, points, indices);
+        std::cout << "group regroup time: " << duration_cast<milliseconds>(hclock::now() - startRegroup).count() << '\n';
+    }
+
+
     static void constructResult(float points[][104], uint32_t numPoints, vector<vector<uint32_t>>& result) {
 
         long timeBoundsMs = (getenv("LOCAL_RUN") || numPoints == 10'000)  ? 20'000 : 900'000;
@@ -402,7 +500,8 @@ struct SolutionKmeans {
     #endif
             std::iota(indices.begin(), indices.end(), 0);
             auto startGroupProcess = hclock::now();
-            splitKmeansBinaryProcess({0, numPoints}, 1, 400, points, indices, idToKnn);
+            splitKmeansBinaryProcess({0, numPoints}, 2, 1000, points, indices, idToKnn);
+//            splitHorizontal(idToKnn, 400, requiredHashFuncs(numPoints, 200), numPoints, points, indices);
 
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroupProcess).count();
             std::cout << " group/process time: " << groupDuration << '\n';
