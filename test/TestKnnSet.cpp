@@ -6,7 +6,7 @@
 /////////  KnnSet /////////////////////////////////////////////////////////
 TEST(KnnSet, containsNotFull){
     KnnSet ks;
-    ks.push(std::make_pair(0.1f, 99));
+    ks.push(0.1f, 99, true);
     ASSERT_TRUE(ks.contains(99));
     ASSERT_FALSE(ks.contains(100));
 }
@@ -14,7 +14,7 @@ TEST(KnnSet, containsNotFull){
 TEST(KnnSet, containsFull){
     KnnSet ks;
     for (uint32_t i = 0; i < 100; ++i) {
-        ks.push(std::make_pair(0.01 * i, i));
+        ks.push(0.01 * i, i, true);
     }
 
     ASSERT_TRUE(ks.contains(50));
