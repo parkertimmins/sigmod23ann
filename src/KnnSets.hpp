@@ -22,92 +22,6 @@ using std::tuple;
 
 
 
-struct KnnSet {
-public:
-    vector<tuple<float, uint32_t, bool>> queue;
-    uint32_t size = 0;
-    float lower_bound = std::numeric_limits<float>::max();
-    public:
-    KnnSet() {
-        queue.resize(101);
-    }
-
-    bool contains(uint32_t node) {
-        for (auto& [dist, id, known] : queue) {
-            if (id == node) { return true; }
-        }
-        return false;
-    }
-
-    tuple<float, uint32_t, bool>& top() {
-        return queue[0];
-    }
-
-    void push(float dist, uint32_t id, bool known) {
-        queue[size] = {dist, id, known};
-        size++;
-        std::push_heap(queue.begin(), queue.begin() + size);
-    }
-
-    void pop() {
-        std::pop_heap(queue.begin(), queue.begin() + size);
-        size--;
-    }
-
-    void addCandidate(const uint32_t candidate_id, float dist) {
-        if (size < 100) {
-            if (!contains(candidate_id)) {
-                push(dist, candidate_id, true);
-                lower_bound = std::get<0>(top());
-            }
-        } else if (dist < lower_bound && !contains(candidate_id)) {
-            push(dist, candidate_id, true);
-            pop();
-            lower_bound = std::get<0>(top());
-        }
-    }
-
-    void addCandidateBound(const uint32_t candidate_id, float dist, float points[][104] , uint32_t this_id) {
-        if (dist < lower_bound) {
-             if (contains(candidate_id)) {
-                 return;
-             }
-
-             push(dist, candidate_id, false);
-             while (true) {
-                std::pop_heap(queue.begin(), queue.begin() + size);
-                auto& toRemove = queue.back();
-                bool isBound = !get<2>(toRemove);
-                uint32_t id = get<1>(toRemove);
-                if (isBound) {
-                    float actualDist = distance(points[this_id], points[id]);
-                    toRemove = { actualDist, id, true };
-                    std::push_heap(queue.begin(), queue.begin() + size);
-                } else {
-                    size--;
-                    break;
-                }
-            }
-
-            lower_bound = get<0>(top());
-        } else {
-            float actualDist = distance(points[this_id], points[candidate_id]);
-            addCandidate(candidate_id, actualDist);
-        }
-    }
-
-
-    vector<uint32_t> finalize() {
-        vector<uint32_t> knn;
-        while (size) {
-            knn.emplace_back(get<1>(top()));
-            pop();
-        }
-        std::reverse(knn.begin(), knn.end());
-        return knn;
-    }
-};
-
 struct KnnSetScannableSimd {
 public:
     alignas(sizeof(__m256)) float dists[100] = {};
@@ -215,130 +129,48 @@ public:
     }
 };
 
-struct KnnSetSorted {
-public:
-    vector<pair<float, uint32_t>> queue;
-    float lower_bound = 0; // 0 -> max val in first 100 -> decreases
-
-    KnnSetSorted() { queue.reserve(k); }
-
-    bool contains(uint32_t node) {
-        for (auto& [dist, id] : queue) {
-            if (id == node) { return true; }
-        }
-        return false;
-    }
-
-    void append(pair<float, uint32_t> nodePair) {
-        queue.push_back(nodePair);
-    }
-
-    // This may misorder nodes of equal sizes
-    void addCandidate(const uint32_t candidate_id, float dist) {
-        if (queue.size() < k) {
-            if (!contains(candidate_id)) {
-                append({dist, candidate_id});
-            }
-            if (queue.size() == k) {
-                std::sort(queue.begin(), queue.end(), std::ranges::greater{});
-                lower_bound = queue[0].first;
-            }
-        } else if (dist < lower_bound) {
-            for (uint32_t i = 0; i < 99; ++i) {
-                auto& [otherDist, id] = queue[i];
-                if (id == candidate_id) {
-                    return;
-                } else if (dist <= otherDist) {
-                    queue[i] = {dist, candidate_id};
-                    return;
-                } else {
-                    queue[i] = queue[i+1];
-                }
-            }
-            if (queue[99].second != candidate_id) {
-                queue[99] = {dist, candidate_id};
-            }
-            lower_bound = queue[0].first;
-        }
-    }
-
-    vector<uint32_t> finalize() {
-        std::sort(queue.begin(), queue.end());
-        vector<uint32_t> knn;
-        for (auto& [dist, id] : queue) {
-            knn.push_back(id);
-        }
-        return knn;
-    }
-};
 
 
 
 struct KnnSetScannable {
 public:
-    vector<pair<float, uint32_t>> queue;
+    vector<tuple<float, uint32_t, bool>> queue;
     uint32_t size = 0;
     float lower_bound = 0; // 0 -> max val in first 100 -> decreases
-//    vector<uint16_t> groups;
 
     KnnSetScannable() {
         queue.resize(k);
-//        groups.reserve(48);
     }
-
-//    void addGroup(uint16_t newGroup) {
-//        if (groups.size() < 48) {
-//            groups.push_back(newGroup);
-//        }
-//    }
-//
-//    bool previouslyChecked(vector<uint16_t>& other) {
-//        uint16_t* grpA = groups.data();
-//        uint16_t* grpB = other.data();
-//        auto limit = grpA + groups.size();
-//        while (grpA + 16 < limit) {
-//            auto a = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(grpA));
-//            auto b = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(grpB));
-//            auto match = _mm256_movemask_epi8(_mm256_cmpeq_epi32(a, b));
-//            if (match) { return true; }
-//            grpA += 16;
-//            grpB += 16;
-//        }
-//        while (grpA < limit) {
-//            if (*grpA == *grpB) { return true; }
-//            grpA++;
-//            grpB++;
-//        }
-//        return false;
-//    }
 
     bool contains(uint32_t node) {
         for (uint32_t i = 0; i < size; ++i) {
-            auto id = queue[i].second;
+            auto id = get<1>(queue[i]);
             if (id == node) { return true; }
         }
         return false;
     }
 
-    void append(pair<float, uint32_t> nodePair) {
-        queue[size] = std::move(nodePair);
+    void append(float dist, uint32_t id, bool isNew) {
+        queue[size] = std::make_tuple(dist, id, isNew);
         size++;
     }
 
     // This may misorder nodes of equal sizes
-    void addCandidate(const uint32_t candidate_id, float dist) {
+    bool addCandidate(const uint32_t candidate_id, float dist) {
         if (size < k) {
             if (!contains(candidate_id)) {
-                append({dist, candidate_id});
+                append(dist, candidate_id, true);
                 lower_bound = std::max(lower_bound, dist);
+                return true;
             }
+            return false;
         } else if (dist < lower_bound) {
             float secondMaxVal = std::numeric_limits<float>::min();
             float maxVal = std::numeric_limits<float>::min();
             uint32_t maxIdx = -1;
             for (uint32_t i = 0; i < size; ++i) {
-                auto& [otherDist, id] = queue[i];
-                if (id == candidate_id) { return; }
+                auto& [otherDist, id, otherIsNew] = queue[i];
+                if (id == candidate_id) { return false; }
                 if (otherDist > maxVal) {
                     secondMaxVal = maxVal;
                     maxVal = otherDist;
@@ -348,101 +180,18 @@ public:
                 }
             }
 
-            queue[maxIdx] = {dist, candidate_id};
+            queue[maxIdx] = {dist, candidate_id, true};
             lower_bound = std::max(secondMaxVal, dist);
+            return true;
         }
-    }
-
-    void addCandidateSkipContains(const uint32_t candidate_id, float dist) {
-        if (dist < lower_bound) {
-            float secondMaxVal = std::numeric_limits<float>::min();
-            float maxVal = std::numeric_limits<float>::min();
-            uint32_t maxIdx = -1;
-            for (uint32_t i = 0; i < size; ++i) {
-                auto& [otherDist, id] = queue[i];
-                if (otherDist > maxVal) {
-                    secondMaxVal = maxVal;
-                    maxVal = otherDist;
-                    maxIdx = i;
-                } else if (otherDist > secondMaxVal) {
-                    secondMaxVal = otherDist;
-                }
-            }
-
-            queue[maxIdx] = {dist, candidate_id};
-            lower_bound = std::max(secondMaxVal, dist);
-        }
-    }
-
-    void merge(vector<pair<float, uint32_t>>& left,
-               vector<pair<float, uint32_t>>& right,
-               vector<pair<float, uint32_t>>& output) {
-
-        // l and r point to next items to insert
-        uint32_t l = 0;
-        uint32_t r = 0;
-
-        // out points to next insert point
-        uint32_t out = 0;
-
-        auto rightSize = size;
-        if (!left.empty() && rightSize > 0) {
-            if (left[l] <= right[r]) {
-                output[out++] = left[l++];
-            } else {
-                output[out++] = right[r++];
-            }
-        } else if (!left.empty()) {
-            output[out++] = left[l++];
-        } else if (rightSize > 0) {
-            output[out++] = right[r++];
-        } else {
-            size = out;
-            return;
-        }
-
-        while (out < k && (l < left.size() || r < rightSize)) {
-            if (l < left.size() && r < rightSize) {
-                if (left[l] == output[out - 1]) {
-                    l++;
-                } else if (right[r] == output[out - 1]) {
-                    r++;
-                } else if (left[l] <= right[r]) {
-                    output[out++] = left[l++];
-                } else {
-                    output[out++] = right[r++];
-                }
-            } else if (l < left.size()) {
-                while (out < k && l < left.size())  {
-                    if (left[l] == output[out - 1]) {
-                        l++;
-                    } else {
-                        output[out++] = left[l++];
-                    }
-                }
-            } else {
-                while (out < k && r < rightSize)  {
-                    if (right[r] == output[out - 1]) {
-                        r++;
-                    } else {
-                        output[out++] = right[r++];
-                    }
-                }
-            }
-        }
-        size = out;
-    }
-
-    void mergeCandidates(vector<pair<float, uint32_t>>& distPairCache, vector<pair<float, uint32_t>>& outQueue) {
-        merge(distPairCache, queue, outQueue);
-        std::swap(queue, outQueue);
+        return false;
     }
 
     vector<uint32_t> finalize() {
         std::sort(queue.begin(), queue.begin() + size);
         vector<uint32_t> knn;
         for (uint32_t i = 0; i < size; ++i) {
-            knn.push_back(queue[i].second);
+            knn.push_back(get<1>(queue[i]));
         }
         return knn;
     }

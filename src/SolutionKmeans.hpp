@@ -28,7 +28,7 @@
 #include "LinearAlgebra.hpp"
 #include "Utility.hpp"
 #include <ranges>
-#include "tsl/robin_map.h"
+#include "tsl/robin_set.h"
 
 
 using std::cout;
@@ -304,75 +304,23 @@ struct SolutionKmeans {
         }
     }
 
-    static void topUpBounded(float points[][104], vector<KnnSet>& idToKnn) {
+    static uint64_t topUp(float points[][104], vector<KnnSetScannable>& idToKnn) {
         auto startTopup = hclock::now();
         uint32_t numPoints = idToKnn.size();
 
-        vector<vector<pair<uint32_t, float>>> knnIds(numPoints);
-        tbb::parallel_for(
-                tbb::blocked_range<size_t>(0, numPoints),
-                [&](oneapi::tbb::blocked_range<size_t> r) {
-                    for (auto id = r.begin(); id < r.end(); ++id) {
-                        vector<pair<uint32_t, float>> ids;
-                        ids.reserve(100);
-                        for (auto& [dist, id2, known] : idToKnn[id].queue) {
-                            ids.emplace_back(id2, dist);
-                        }
-                        std::sort(ids.begin(), ids.end());
-                        knnIds[id] = std::move(ids);
-                    }
-                }
-        );
+        std::atomic<uint64_t> nodesUpdated = 0;
+        std::atomic<uint64_t> nodesAdded = 0;
 
-        std::cout << "top copy idKnnSet time: " << duration_cast<milliseconds>(hclock::now() - startTopup).count() << "\n";
-
-        std::atomic<uint32_t> count = 0;
-        tbb::parallel_for(
-                tbb::blocked_range<size_t>(0, numPoints),
-                [&](oneapi::tbb::blocked_range<size_t> r) {
-                    tsl::robin_map<uint32_t, float> candidates;
-                    for (auto id1 = r.begin(); id1 < r.end(); ++id1) {
-                        auto& knnSet = idToKnn[id1];
-                        for (auto& [id2, dist1To2] : knnIds[id1]) {
-                            for (auto& [id3, dist2To3] : knnIds[id2]) {
-                                auto it = candidates.find(id3);
-                                if (it == candidates.end()) {
-                                    candidates[id3] = dist1To2 + dist2To3;
-                                } else {
-                                    candidates[id3]= std::min(it->second, dist1To2 + dist2To3);
-                                }
-                            }
-                        }
-
-                        candidates.erase(id1);
-                        for (auto& [id3, distBound] : candidates) {
-                            knnSet.addCandidateBound(id3, distBound, points , id1);
-                        }
-                        candidates.clear();
-
-                        auto currCount = count++;
-                        if (currCount % 10'000 == 0) {
-                            auto topupTime = duration_cast<milliseconds>(hclock::now() - startTopup).count();
-                            std::cout << "topped up: " << currCount << ", timing topping up:" << topupTime << "\n";
-                        }
-                    }
-                }
-        );
-    }
-
-    static void topUp(float points[][104], vector<KnnSetScannable>& idToKnn) {
-        auto startTopup = hclock::now();
-        uint32_t numPoints = idToKnn.size();
-
-        vector<vector<uint32_t>> knnIds(numPoints);
+        vector<vector<pair<uint32_t, bool>>> knnIds(numPoints);
         tbb::parallel_for(
             tbb::blocked_range<size_t>(0, numPoints),
             [&](oneapi::tbb::blocked_range<size_t> r) {
                 for (auto id = r.begin(); id < r.end(); ++id) {
-                    vector<uint32_t> ids;
+                    vector<pair<uint32_t, bool>> ids;
                     ids.reserve(100);
-                    for (auto &[dist, id2] : idToKnn[id].queue) {
-                        ids.push_back(id2);
+                    for (auto &[dist, id2, isNew] : idToKnn[id].queue) {
+                        ids.emplace_back(id2, isNew);
+                        isNew = false;
                     }
                     std::sort(ids.begin(), ids.end());
                     knnIds[id] = std::move(ids);
@@ -388,19 +336,30 @@ struct SolutionKmeans {
             [&](oneapi::tbb::blocked_range<size_t> r) {
                 tsl::robin_set<uint32_t> candidates;
                 for (auto id1 = r.begin(); id1 < r.end(); ++id1) {
+                    uint32_t added = 0;
                     auto& knn = knnIds[id1];
                     auto& knnSet = idToKnn[id1];
-                    for (auto& id2 : knnIds[id1]) {
-                        for (auto& id3: knnIds[id2]) { candidates.insert(id3); }
+                    for (auto& [id2, isNew2] : knnIds[id1]) {
+                        if (isNew2) {
+                            // if id2 is new, need to add all neighbors
+                            for (auto& [id3, isNew3]: knnIds[id2]) { candidates.insert(id3); }
+                        } else {
+                            // if id2 is not new, only need to add its new neighbors
+                            for (auto& [id3, isNew3]: knnIds[id2]) {
+                                if (isNew3) { candidates.insert(id3); }
+                            }
+                        }
                     }
 
                     // remove current ids and self id
-                    for (auto& id2 : knnIds[id1]) { candidates.erase(id2); }
+//                    for (auto& id2 : knnIds[id1]) { candidates.erase(id2); }
                     candidates.erase(id1);
 
                     for (auto& id3 : candidates) {
                         float dist = distance(points[id3], points[id1]);
-                        knnSet.addCandidate(id3, dist);
+                        if (knnSet.addCandidate(id3, dist)) {
+                            added++;
+                        }
                     }
                     candidates.clear();
 
@@ -409,9 +368,17 @@ struct SolutionKmeans {
                         auto topupTime = duration_cast<milliseconds>(hclock::now() - startTopup).count();
                         std::cout << "topped up: " << currCount << ", timing topping up:" << topupTime << "\n";
                     }
+                    if (added > 0) {
+                        nodesUpdated++;
+                        nodesAdded += added;
+                    }
                 }
             }
         );
+
+        std::cout << "topUp nodes added: " << nodesAdded << "\n";
+        std::cout << "topUp nodes changed: " << nodesUpdated << "\n";
+        return nodesUpdated.load();
     }
 
     static void constructResult(float points[][104], uint32_t numPoints, vector<vector<uint32_t>>& result) {
@@ -428,8 +395,8 @@ struct SolutionKmeans {
         std::vector<uint32_t> indices(numPoints);
 
         uint32_t iteration = 0;
-//        while (iteration < 2) {
-        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
+        while (iteration < 150) {
+//        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
     #ifdef PRINT_OUTPUT
             std::cout << "Iteration: " << iteration << '\n';
     #endif
@@ -444,8 +411,10 @@ struct SolutionKmeans {
             iteration++;
         }
 
-
-        topUp(points, idToKnn);
+        while (true) {
+            uint64_t nodesUpdates = topUp(points, idToKnn);
+            if (nodesUpdates < 50'000) { break; }
+        }
 
         for (uint32_t id = 0; id < numPoints; ++id) {
             result[id] = idToKnn[id].finalize();
@@ -461,35 +430,7 @@ struct SolutionKmeans {
     #endif
     }
 
-//    static void topUpOneAtATime(float points[][104], vector<KnnSet>& idToKnn) {
-//        auto startTopup = hclock::now();
-//        uint32_t numPoints = idToKnn.size();
-//
-//        std::atomic<uint32_t> count = 0;
-//        for (uint32_t id1 = 0; id1 < numPoints; ++id1) {
-//            auto& knnSet = idToKnn[id1];
-//            tbb::parallel_for(
-//                tbb::blocked_range<size_t>(0, knnSet.queue.size()),
-//                [&](oneapi::tbb::blocked_range<size_t> r) {
-//                    for (auto i = r.begin(); i < r.end(); ++i) {
-//                        auto id2 = knnSet.queue[i].second;
-//
-//                        for (auto& [d3, id3] : idToKnn[id2].queue) {
-//                            if (id3 != id1) {
-//                                float dist = distance(points[id3], points[id1]);
-//                                knnSet.addCandidate(id3, dist);
-//                            }
-//                        }
-//                    }
-//                }
-//            );
-//            auto currCount = count++;
-//            if (currCount % 10'000 == 0) {
-//                auto topupTime = duration_cast<milliseconds>(hclock::now() - startTopup).count();
-//                std::cout << "topped up: " << currCount << ", timing topping up:" << topupTime << "\n";
-//            }
-//        }
-//    }
+
 
 
 };
