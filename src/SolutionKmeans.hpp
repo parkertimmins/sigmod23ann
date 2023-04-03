@@ -142,7 +142,7 @@ struct SolutionKmeans {
                                      uint32_t maxGroupSize,
                                      float points[][104],
                                      vector<uint32_t>& indices,
-                                     vector<KnnSet>& idToKnn
+                                     vector<KnnSetScannable>& idToKnn
     ) {
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize) {
@@ -394,7 +394,10 @@ struct SolutionKmeans {
                         for (auto& id3: knnIds[id2]) { candidates.insert(id3); }
                     }
 
+                    // remove current ids and self id
+                    for (auto& id2 : knnIds[id1]) { candidates.erase(id2); }
                     candidates.erase(id1);
+
                     for (auto& id3 : candidates) {
                         float dist = distance(points[id3], points[id1]);
                         knnSet.addCandidate(id3, dist);
@@ -419,7 +422,7 @@ struct SolutionKmeans {
         std::cout << "start run with time bound: " << timeBoundsMs << '\n';
     #endif
         auto startTime = hclock::now();
-        vector<KnnSet> idToKnn(numPoints);
+        vector<KnnSetScannable> idToKnn(numPoints);
 
         // rewrite point data in adjacent memory and sort in a group order
         std::vector<uint32_t> indices(numPoints);
@@ -442,7 +445,7 @@ struct SolutionKmeans {
         }
 
 
-        topUpBounded(points, idToKnn);
+        topUp(points, idToKnn);
 
         for (uint32_t id = 0; id < numPoints; ++id) {
             result[id] = idToKnn[id].finalize();
