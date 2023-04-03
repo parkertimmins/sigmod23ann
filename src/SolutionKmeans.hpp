@@ -383,7 +383,7 @@ struct SolutionKmeans {
 
     static void constructResult(float points[][104], uint32_t numPoints, vector<vector<uint32_t>>& result) {
 
-        long timeBoundsMs = (getenv("LOCAL_RUN") || numPoints == 10'000)  ? 20'000 : 1'150'000;
+        long timeBoundsMs = (getenv("LOCAL_RUN") || numPoints == 10'000)  ? 20'000 : 730'000;
 
     #ifdef PRINT_OUTPUT
         std::cout << "start run with time bound: " << timeBoundsMs << '\n';
@@ -395,8 +395,8 @@ struct SolutionKmeans {
         std::vector<uint32_t> indices(numPoints);
 
         uint32_t iteration = 0;
-        while (iteration < 150) {
-//        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
+//        while (iteration < 150) {
+        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
     #ifdef PRINT_OUTPUT
             std::cout << "Iteration: " << iteration << '\n';
     #endif
@@ -411,9 +411,9 @@ struct SolutionKmeans {
             iteration++;
         }
 
-        while (true) {
+        for (auto i = 0 ; i < 4; ++i) {
             uint64_t nodesUpdates = topUp(points, idToKnn);
-            if (nodesUpdates < 50'000) { break; }
+//            if (nodesUpdates < 50'000) { break; }
         }
 
         for (uint32_t id = 0; id < numPoints; ++id) {
