@@ -49,10 +49,9 @@ struct SolutionRandomKD {
 
     static uint32_t calcSampleSize(uint32_t min, uint32_t max) {
         uint32_t rangeSize = max - min;
-        return rangeSize / 3;
-        //return pow(log(rangeSize) / log(30), 7);
+//        return rangeSize / 3;
+        return pow(log(rangeSize) / log(30), 7);
     }
-
 
     static vector<uint32_t> getSample(uint32_t min, uint32_t max) {
         uint32_t sampleSize = calcSampleSize(min, max);
@@ -65,45 +64,32 @@ struct SolutionRandomKD {
         return sample;
     }
 
-
-    static pair<Vec, Vec> kmeansStartVecs(Range& range, float points[][104], vector<uint32_t>& indices) {
-        uint32_t rangeSize = range.second - range.first;
-        uint32_t sampleSize = pow(log10(rangeSize), 2.5); // 129 samples for 10m bucket, 16 samples for bucket of 1220
-        vector<uint32_t> idSample;
-        idSample.reserve(sampleSize);
-        std::uniform_int_distribution<uint32_t> distribution(range.first, range.second-1);
-        while (idSample.size() < sampleSize) {
-            idSample.push_back(indices[distribution(rd)]);
-        }
-
-        float maxDist = std::numeric_limits<float>::min();
-        float* pii = nullptr;
-        float* pjj = nullptr;
-        for (uint32_t i = 0; i < idSample.size() - 1; ++i) {
-            for (uint32_t j = i+1; j < idSample.size(); ++j) {
-                float* pi = points[idSample[i]];
-                float* pj = points[idSample[j]];
-                float dist = distance(pi, pj);
-                if (dist > maxDist) {
-                    maxDist = dist;
-                    pii = pi;
-                    pjj = pj;
+    static vector<double> getMeanSample(float points[][104], vector<uint32_t> indices, vector<uint32_t>& rangeSample) {
+        tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, rangeSample.size()),
+            [&](oneapi::tbb::blocked_range<size_t> r) {
+                auto& sumsLocal = sums.local();
+                for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                    auto& pt = points[indices[rangeSample[i]]];
+                    for (uint32_t j = 0; j < dims; ++j) { sumsLocal[j] += pt[j]; }
                 }
             }
-        }
+        );
+        auto sumsGlobal = sums.combine([](const vector<double>& x, const vector<double>& y) {
+            vector<double> res(100, 0.0f);
+            for (uint32_t j = 0; j < dims; ++j) { res[j]  = x[j] + y[j]; }
+            return res;
+        });
 
-        // copy points into Vec objects
-        Vec center1(dims);
-        Vec center2(dims);
-        // TODO use copy as memcpy not safe
-        for (uint32_t i = 0; i < dims; ++i) {
-            center1[i]  = pii[i];
-            center2[i]  = pjj[i];
+        auto size = rangeSample.size();
+        for (auto& v : sumsGlobal) {
+            v /= size;
         }
-        return make_pair(center1, center2);
+        return sumsGlobal;
     }
 
-    static vector<double> getMeans(float points[][104], vector<uint32_t> indices, Range range) {
+    static vector<double> getMean(float points[][104], vector<uint32_t> indices, Range range) {
         uint32_t rangeSize = range.second - range.first;
         tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
         tbb::parallel_for(
@@ -128,7 +114,7 @@ struct SolutionRandomKD {
         return sumsGlobal;
     }
 
-    static vector<double> getVariances(vector<double> means, float points[][104], vector<uint32_t> indices, Range range) {
+    static vector<double> getVariance(vector<double> means, float points[][104], vector<uint32_t> indices, Range range) {
         uint32_t rangeSize = range.second - range.first;
         tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
         tbb::parallel_for(
@@ -152,6 +138,34 @@ struct SolutionRandomKD {
 
         for (auto& v : sumsGlobal) {
             v /= (rangeSize - 1);
+        }
+        return sumsGlobal;
+    }
+
+    static vector<double> getVarianceSample(vector<double> means, float points[][104], vector<uint32_t> indices, vector<uint32_t>& rangeSample) {
+        tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, rangeSample.size()),
+            [&](oneapi::tbb::blocked_range<size_t> r) {
+                auto& sumsLocal = sums.local();
+                for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                    auto& pt = points[indices[rangeSample[i]]];
+                    for (uint32_t j = 0; j < dims; ++j) {
+                        auto diff = pt[j] - means[j];
+                        sumsLocal[j] += diff * diff;
+                    }
+                }
+            }
+        );
+        auto sumsGlobal = sums.combine([](const vector<double>& x, const vector<double>& y) {
+            vector<double> res(100, 0.0f);
+            for (uint32_t j = 0; j < dims; ++j) { res[j]  = x[j] + y[j]; }
+            return res;
+        });
+
+        auto size = rangeSample.size();
+        for (auto& v : sumsGlobal) {
+            v /= (size - 1);
         }
         return sumsGlobal;
     }
@@ -181,9 +195,9 @@ struct SolutionRandomKD {
 //        return sumsGlobal;
 //    }
 
-    static uint32_t pickIndex(Range range, float points[][104], vector<uint32_t>& indices) {
-        auto means = getMeans(points, indices, range);
-        auto variances = getVariances(means, points, indices, range);
+    static uint32_t pickIndex(float points[][104], vector<uint32_t>& indices, vector<uint32_t>& rangeSample) {
+        auto means = getMeanSample(points, indices, rangeSample);
+        auto variances = getVarianceSample(means, points, indices, rangeSample);
 
         // pick dimension
         vector<pair<double, uint32_t>> varianceIndices;
@@ -192,7 +206,7 @@ struct SolutionRandomKD {
             varianceIndices.emplace_back(variances[j], j);
         }
         std::sort(varianceIndices.begin(), varianceIndices.end(), std::greater{});
-        uint32_t indexSampleRange = 30;
+        uint32_t indexSampleRange = 15;
         std::uniform_int_distribution<uint32_t> distribution(0, indexSampleRange);
         auto [var, idx] = varianceIndices[distribution(rd)];
         return idx;
@@ -208,11 +222,14 @@ struct SolutionRandomKD {
         if (rangeSize < maxGroupSize) {
             addCandidates(points, indices, range, idToKnn);
         } else {
-//            uint32_t idx = pickIndex(range, points, indices);
-            uint32_t idx = pickRandomIndex();
-
-            // find median
+            // get range sample
             auto sampleRange = getSample(range.first, range.second);
+//            std::sort(sampleRange.begin(), sampleRange.end());
+
+//            uint32_t idx = pickRandomIndex();
+            uint32_t idx = pickIndex(points, indices, sampleRange);
+
+            // get sample of column
             vector<float> sample;
             sample.reserve(sampleRange.size());
             for (auto& i : sampleRange) {
@@ -228,7 +245,7 @@ struct SolutionRandomKD {
 
             std::sort(sample.begin(), sample.end());
             auto median = sample[sample.size() / 2];
-            auto splitValue = median; //means[idx];
+            auto splitValue = median;
 
             // compute final groups
             using groups = pair<vector<uint32_t>, vector<uint32_t>>;
