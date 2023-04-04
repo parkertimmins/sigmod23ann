@@ -43,7 +43,7 @@ using std::vector;
 
 
 uint64_t groupingTime = 0;
-uint64_t processGroupsTime = 0;
+std::atomic<uint64_t> processTime = 0;
 
 
 

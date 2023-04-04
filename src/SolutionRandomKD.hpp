@@ -45,6 +45,7 @@ using std::vector;
 struct SolutionRandomKD {
 
     static inline std::atomic<uint64_t> groupProcessTime = 0;
+    static inline std::atomic<uint64_t> processTime = 0;
 
 
     static uint32_t calcSampleSize(uint32_t min, uint32_t max) {
@@ -220,7 +221,9 @@ struct SolutionRandomKD {
     static void split(Range range, uint32_t maxGroupSize, float points[][104], vector<uint32_t>& indices, vector<KnnSetScannable>& idToKnn) {
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize) {
+            auto startProcess = hclock::now();
             addCandidates(points, indices, range, idToKnn);
+            processTime += duration_cast<milliseconds>(hclock::now() - startProcess).count();
         } else {
             // get range sample
             auto sampleRange = getSample(range.first, range.second);
@@ -292,6 +295,7 @@ struct SolutionRandomKD {
 
     static void constructResult(float points[][104], uint32_t numPoints, vector<vector<uint32_t>>& result) {
 
+        auto numThreads = std::thread::hardware_concurrency();
         long timeBoundsMs = (getenv("LOCAL_RUN") || numPoints == 10'000)  ? 20'000 : 1'650'000;
 
     #ifdef PRINT_OUTPUT
@@ -310,11 +314,18 @@ struct SolutionRandomKD {
 
             std::iota(indices.begin(), indices.end(), 0);
             auto startGroupProcess = hclock::now();
-            split({0, numPoints}, 400, points, indices, idToKnn);
+            split({0, numPoints}, 1000, points, indices, idToKnn);
 
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroupProcess).count();
-            std::cout << " group/process time: " << groupDuration << '\n';
+//            std::cout << " group/process time: " << groupDuration << '\n';
+
+            uint64_t avgProcessTime = processTime / numThreads;
+            std::cout << " avg group time: " << groupDuration - avgProcessTime << '\n';
+            std::cout << " avg process time: " << avgProcessTime << '\n';
+            processTime = 0;
             groupProcessTime += groupDuration;
+
+
 
             iteration++;
         }
