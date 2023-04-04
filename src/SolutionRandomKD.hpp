@@ -65,7 +65,7 @@ struct SolutionRandomKD {
         return sample;
     }
 
-    static vector<double> getMeanSample(float points[][104], vector<uint32_t> indices, vector<uint32_t>& rangeSample) {
+    static vector<double> getMeanSample(float points[][104], vector<uint32_t>& indices, vector<uint32_t>& rangeSample) {
         tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
         tbb::parallel_for(
             tbb::blocked_range<size_t>(0, rangeSample.size()),
@@ -90,7 +90,7 @@ struct SolutionRandomKD {
         return sumsGlobal;
     }
 
-    static vector<double> getMean(float points[][104], vector<uint32_t> indices, Range range) {
+    static vector<double> getMean(float points[][104], vector<uint32_t>& indices, Range range) {
         uint32_t rangeSize = range.second - range.first;
         tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
         tbb::parallel_for(
@@ -115,7 +115,7 @@ struct SolutionRandomKD {
         return sumsGlobal;
     }
 
-    static vector<double> getVariance(vector<double> means, float points[][104], vector<uint32_t> indices, Range range) {
+    static vector<double> getVariance(vector<double>& means, float points[][104], vector<uint32_t>& indices, Range range) {
         uint32_t rangeSize = range.second - range.first;
         tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
         tbb::parallel_for(
@@ -143,7 +143,7 @@ struct SolutionRandomKD {
         return sumsGlobal;
     }
 
-    static vector<double> getVarianceSample(vector<double> means, float points[][104], vector<uint32_t> indices, vector<uint32_t>& rangeSample) {
+    static vector<double> getVarianceSample(vector<double>& means, float points[][104], vector<uint32_t>& indices, vector<uint32_t>& rangeSample) {
         tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
         tbb::parallel_for(
             tbb::blocked_range<size_t>(0, rangeSample.size()),
@@ -314,7 +314,7 @@ struct SolutionRandomKD {
 
             std::iota(indices.begin(), indices.end(), 0);
             auto startGroupProcess = hclock::now();
-            split({0, numPoints}, 1000, points, indices, idToKnn);
+            split({0, numPoints}, 400, points, indices, idToKnn);
 
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroupProcess).count();
 //            std::cout << " group/process time: " << groupDuration << '\n';
