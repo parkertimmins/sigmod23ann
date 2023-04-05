@@ -132,6 +132,70 @@ public:
 
 
 
+
+struct alignas(64) KnnSetInline {
+public:
+    pair<float, uint32_t> queue[100];
+    uint32_t size = 0;
+    float lower_bound = 0; // 0 -> max val in first 100 -> decreases
+
+    bool contains(uint32_t node) {
+        for (uint32_t i = 0; i < size; ++i) {
+            auto id = get<1>(queue[i]);
+            if (id == node) { return true; }
+        }
+        return false;
+    }
+
+    void append(float dist, uint32_t id) {
+        queue[size] = std::make_pair(dist, id);
+        size++;
+    }
+
+    // This may misorder nodes of equal sizes
+    bool addCandidate(const uint32_t candidate_id, float dist) {
+        if (size < k) {
+            if (!contains(candidate_id)) {
+                append(dist, candidate_id);
+                lower_bound = std::max(lower_bound, dist);
+                return true;
+            }
+            return false;
+        } else if (dist < lower_bound) {
+            float secondMaxVal = std::numeric_limits<float>::min();
+            float maxVal = std::numeric_limits<float>::min();
+            uint32_t maxIdx = -1;
+            for (uint32_t i = 0; i < size; ++i) {
+                auto& [otherDist, id] = queue[i];
+                if (id == candidate_id) { return false; }
+                if (otherDist > maxVal) {
+                    secondMaxVal = maxVal;
+                    maxVal = otherDist;
+                    maxIdx = i;
+                } else if (otherDist > secondMaxVal) {
+                    secondMaxVal = otherDist;
+                }
+            }
+
+            queue[maxIdx] = {dist, candidate_id};
+            lower_bound = std::max(secondMaxVal, dist);
+            return true;
+        }
+        return false;
+    }
+
+    vector<uint32_t> finalize() {
+        std::sort(queue, queue + size);
+        vector<uint32_t> knn;
+        for (uint32_t i = 0; i < size; ++i) {
+            knn.push_back(get<1>(queue[i]));
+        }
+        return knn;
+    }
+};
+
+//static_assert(sizeof(KnnSetInline) % 64 == 0);
+
 struct KnnSetScannable {
 public:
     vector<tuple<float, uint32_t, bool>> queue;
