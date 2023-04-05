@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <immintrin.h>
+
 #include <limits>
 #include <algorithm>
 #include <queue>
@@ -22,12 +23,13 @@ using std::tuple;
 
 
 
-struct KnnSetScannableSimd {
+struct alignas(64) KnnSetScannableSimd {
 public:
-    alignas(sizeof(__m256)) float dists[100] = {};
-    uint32_t size = 0;
+    alignas(sizeof(__m256)) float dists[104] = { 0 };
     alignas(sizeof(__m256)) uint32_t current_ids[100] = {};
+    uint32_t size = 0;
     float lower_bound = 0; // 0 -> max val in first 100 -> decreases
+    uint32_t lowerBoundIdx = -1;
     bool contains(uint32_t node) {
         for (uint32_t i = 0; i < size; ++i) {
             if (current_ids[i] == node) { return true; }
@@ -50,65 +52,61 @@ public:
         return false;
     }
 
-    void append(const uint32_t candidate_id, float dist) {
-        current_ids[size] = candidate_id;
-        dists[size] = dist;
+    uint32_t append(const uint32_t candidate_id, float dist) {
+        auto idx = size;
+        current_ids[idx] = candidate_id;
+        dists[idx] = dist;
         size++;
+        return idx;
     }
 
-    // find index of distance that is known to exist
-    uint32_t getIdxOfDist(float matchDist) {
-        __m256i pattern = _mm256_castps_si256(_mm256_set1_ps(matchDist));
+    uint32_t getMaxIdx() {
         auto* distances = dists;
-        for (uint32_t i = 0; i < 96; i+=8) {
-            __m256i block = _mm256_castps_si256(_mm256_load_ps(distances));
-            uint32_t match = _mm256_movemask_epi8(_mm256_cmpeq_epi32(pattern, block));
-            if (match) {
-                return i + (__builtin_ctz(match) >> 2);
-            }
-            distances += 8;
-        }
-        for (uint32_t i = 96; i < size; ++i) {
-            if (dists[i] == matchDist) { return i; }
-        }
-
-        __builtin_unreachable();
-    }
-
-    float getMax() {
-        __m256 maxes = _mm256_set1_ps(std::numeric_limits<float>::min());
-        auto* distances = dists;
-        for (uint32_t i = 0; i < 96; i+=8) {
+        __m256 maxes = _mm256_load_ps(distances);
+        __m256i maxIndices = _mm256_set_epi32(7, 6, 5, 4, 3, 2, 1, 0);
+        __m256i currIndices = _mm256_set_epi32(15, 14, 13, 12, 11, 10, 9, 8);
+        __m256i inc = _mm256_set1_epi32(8);
+        distances+=8;
+        for (uint32_t i = 8; i < 104; i+=8) {
             __m256 block = _mm256_load_ps(distances);
-            maxes = _mm256_max_ps(maxes, block);
+            __m256i gt = _mm256_castps_si256(_mm256_cmp_ps(block, maxes, _CMP_GT_OS));
+            maxIndices = _mm256_blendv_epi8(maxIndices, currIndices, gt);
+            maxes = _mm256_castsi256_ps(_mm256_blendv_epi8(_mm256_castps_si256(maxes), _mm256_castps_si256(block), gt));
+            currIndices = _mm256_add_epi32(currIndices, inc);
             distances += 8;
         }
 
         alignas(sizeof(__m256)) float maxArr[8] = {};
+        uint32_t maxIdxArr[8] = {};
         _mm256_store_ps(maxArr, maxes);
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(maxIdxArr), maxIndices);
         float max = std::numeric_limits<float>::min();
-        for (float m: maxArr) {
-            max = std::max(m, max);
+        uint32_t maxIdx = -1;
+        for (uint32_t i = 0; i < 8; ++i) {
+            if (maxArr[i] > max) {
+                max = maxArr[i];
+                maxIdx = maxIdxArr[i];
+            }
         }
-        for (unsigned i = 96; i < dims; ++i) {
-            max = std::max(dists[i], max);
-        }
-        return max;
+        return maxIdx;
     }
 
     // This may misorder nodes of equal sizes
     void addCandidate(const uint32_t candidate_id, float dist) {
         if (size < k) {
             if (!contains(candidate_id)) {
-                append(candidate_id, dist);
-                lower_bound = std::max(lower_bound, dist);
+                auto idx = append(candidate_id, dist);
+                if (dist > lower_bound) {
+                    lower_bound = dist;
+                    lowerBoundIdx = idx;
+                }
             }
         } else if (dist < lower_bound) {
             if (!containsFull(candidate_id)) {
-                uint32_t maxIdx = getIdxOfDist(lower_bound);
-                dists[maxIdx] = dist;
-                current_ids[maxIdx] = candidate_id;
-                lower_bound = getMax();
+                dists[lowerBoundIdx] = dist;
+                current_ids[lowerBoundIdx] = candidate_id;
+                lowerBoundIdx = getMaxIdx();
+                lower_bound = dists[lowerBoundIdx];
             }
         }
     }

@@ -142,7 +142,7 @@ struct SolutionKmeans {
                                      uint32_t maxGroupSize,
                                      float points[][112],
                                      vector<uint32_t>& indices,
-                                     vector<KnnSetInline>& idToKnn
+                                     vector<KnnSetScannableSimd>& idToKnn
     ) {
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize) {
@@ -490,7 +490,7 @@ struct SolutionKmeans {
         std::cout << "start run with time bound: " << timeBoundsMs << '\n';
     #endif
         auto startTime = hclock::now();
-        vector<KnnSetInline> idToKnn(numPoints);
+        vector<KnnSetScannableSimd> idToKnn(numPoints);
 
         // rewrite point data in adjacent memory and sort in a group order
         std::vector<uint32_t> indices(numPoints);
