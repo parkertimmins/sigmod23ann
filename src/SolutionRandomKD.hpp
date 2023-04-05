@@ -68,7 +68,7 @@ struct SolutionRandomKD {
     static vector<double> getMeanSample(float points[][104], vector<uint32_t>& indices, vector<uint32_t>& rangeSample) {
         tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
         tbb::parallel_for(
-            tbb::blocked_range<size_t>(0, rangeSample.size()),
+            tbb::blocked_range<size_t>(0, rangeSample.size(), 1000),
             [&](oneapi::tbb::blocked_range<size_t> r) {
                 auto& sumsLocal = sums.local();
                 for (uint32_t i = r.begin(); i < r.end(); ++i) {
@@ -94,7 +94,7 @@ struct SolutionRandomKD {
         uint32_t rangeSize = range.second - range.first;
         tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
         tbb::parallel_for(
-            tbb::blocked_range<size_t>(0, rangeSize),
+            tbb::blocked_range<size_t>(0, rangeSize, 1000),
             [&](oneapi::tbb::blocked_range<size_t> r) {
                 auto& sumsLocal = sums.local();
                 for (uint32_t i = r.begin(); i < r.end(); ++i) {
@@ -119,7 +119,7 @@ struct SolutionRandomKD {
         uint32_t rangeSize = range.second - range.first;
         tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
         tbb::parallel_for(
-            tbb::blocked_range<size_t>(0, rangeSize),
+            tbb::blocked_range<size_t>(0, rangeSize, 1000),
             [&](oneapi::tbb::blocked_range<size_t> r) {
                 auto& sumsLocal = sums.local();
                 for (uint32_t i = r.begin(); i < r.end(); ++i) {
@@ -146,7 +146,7 @@ struct SolutionRandomKD {
     static vector<double> getVarianceSample(vector<double>& means, float points[][104], vector<uint32_t>& indices, vector<uint32_t>& rangeSample) {
         tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
         tbb::parallel_for(
-            tbb::blocked_range<size_t>(0, rangeSample.size()),
+            tbb::blocked_range<size_t>(0, rangeSample.size(), 1000),
             [&](oneapi::tbb::blocked_range<size_t> r) {
                 auto& sumsLocal = sums.local();
                 for (uint32_t i = r.begin(); i < r.end(); ++i) {
@@ -254,7 +254,7 @@ struct SolutionRandomKD {
             using groups = pair<vector<uint32_t>, vector<uint32_t>>;
             tbb::combinable<groups> groupsAgg(make_pair<>(vector<uint32_t>(), vector<uint32_t>()));
             tbb::parallel_for(
-                tbb::blocked_range<uint32_t>(range.first, range.second),
+                tbb::blocked_range<uint32_t>(range.first, range.second, 1000),
                 [&](tbb::blocked_range<uint32_t> r) {
                     auto& [g1, g2] = groupsAgg.local();
                     for (uint32_t i = r.begin(); i < r.end(); ++i) {
