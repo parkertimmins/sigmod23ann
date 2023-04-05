@@ -61,6 +61,7 @@ struct SolutionKmeans {
         while (sample.size() < sampleSize) {
             sample.push_back(distribution(rd));
         }
+        std::sort(sample.begin(), sample.end());
         return sample;
     }
 
@@ -676,15 +677,15 @@ struct SolutionKmeans {
         std::vector<uint32_t> indices(numPoints);
 
         uint32_t iteration = 0;
-//        while (iteration < 10) {
+//        while (iteration < 5) {
         while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
     #ifdef PRINT_OUTPUT
             std::cout << "Iteration: " << iteration << '\n';
     #endif
             std::iota(indices.begin(), indices.end(), 0);
             auto startGroupProcess = hclock::now();
-//            splitKmeansBinaryProcess({0, numPoints}, 1, 400, points, indices, idToKnn);
-            splitKmeandStdThreadins(numThreads, {0, numPoints}, 1, 400, points, indices, idToKnn);
+            splitKmeansBinaryProcess({0, numPoints}, 1, 400, points, indices, idToKnn);
+//            splitKmeandStdThreadins(numThreads, {0, numPoints}, 1, 400, points, indices, idToKnn);
 
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroupProcess).count();
             std::cout << " group/process time: " << groupDuration << '\n';

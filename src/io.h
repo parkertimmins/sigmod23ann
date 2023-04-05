@@ -3,6 +3,7 @@
 #include <numeric>
 #include <string>
 #include <vector>
+#include <sys/mman.h>
 
 #include "assert.h"
 #include "Constants.hpp"
@@ -73,7 +74,14 @@ std::pair<float(*)[112], uint32_t> ReadBinArray(const std::string &file_path) {
     ifs.read((char *)&numPoints, sizeof(uint32_t));
     std::cout << "# of points: " << numPoints << std::endl;
 
-    float (*points)[112] = static_cast<float(*)[112]>(aligned_alloc(64, numPoints * 112 * sizeof(float)));
+    auto bytesNeeded = numPoints * 112 * sizeof(float);
+
+    float (*points)[112];
+    if (numPoints == 10'000) {
+        points = static_cast<float(*)[112]>(mmap(nullptr, bytesNeeded, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    } else {
+        points = static_cast<float(*)[112]>(mmap(nullptr, bytesNeeded, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0));
+    }
 
     const int num_dimensions = 100;
     Vec buff(num_dimensions);
