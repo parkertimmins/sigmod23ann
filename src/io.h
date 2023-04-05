@@ -73,7 +73,7 @@ std::pair<float(*)[112], uint32_t> ReadBinArray(const std::string &file_path) {
     ifs.read((char *)&numPoints, sizeof(uint32_t));
     std::cout << "# of points: " << numPoints << std::endl;
 
-    float (*points)[112] = static_cast<float(*)[112]>(aligned_alloc(64, numPoints * I112 * sizeof(float)));
+    float (*points)[112] = static_cast<float(*)[112]>(aligned_alloc(64, numPoints * 112 * sizeof(float)));
 
     const int num_dimensions = 100;
     Vec buff(num_dimensions);
