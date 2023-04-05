@@ -64,7 +64,7 @@ struct SolutionKmeans {
         return sample;
     }
 
-    static pair<Vec, Vec> kmeansStartVecs(vector<uint32_t>& sampleRange, Range& range, float points[][104], vector<uint32_t>& indices) {
+    static pair<Vec, Vec> kmeansStartVecs(vector<uint32_t>& sampleRange, Range& range, float points[][112], vector<uint32_t>& indices) {
         uint32_t rangeSize = range.second - range.first;
         uint32_t sampleSizeforStarts = pow(log10(rangeSize), 2.5); // 129 samples for 10m bucket, 16 samples for bucket of 1220
         uint32_t sampleSize = std::min(static_cast<uint32_t>(sampleRange.size()), sampleSizeforStarts);
@@ -99,7 +99,7 @@ struct SolutionKmeans {
         return make_pair(center1, center2);
     }
 
-    static pair<Vec, Vec> kmeansStartVecs(Range& range, float points[][104], vector<uint32_t>& indices) {
+    static pair<Vec, Vec> kmeansStartVecs(Range& range, float points[][112], vector<uint32_t>& indices) {
         uint32_t rangeSize = range.second - range.first;
         uint32_t sampleSize = pow(log10(rangeSize), 2.5); // 129 samples for 10m bucket, 16 samples for bucket of 1220
         vector<uint32_t> idSample;
@@ -140,13 +140,15 @@ struct SolutionKmeans {
     static void splitKmeansBinaryProcess(Range range,
                                      uint32_t knnIterations,
                                      uint32_t maxGroupSize,
-                                     float points[][104],
+                                     float points[][112],
                                      vector<uint32_t>& indices,
                                      vector<KnnSetScannable>& idToKnn
     ) {
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize) {
+            auto startProcess = hclock::now();
             addCandidates(points, indices, range, idToKnn);
+            processTime += duration_cast<milliseconds>(hclock::now() - startProcess).count();
         } else if (rangeSize < 3'000) { // last two splits single threaded in hope of maintain cache locality
             begin_kmeans_small:
 
@@ -304,7 +306,7 @@ struct SolutionKmeans {
         }
     }
 
-    static uint64_t topUp(float points[][104], vector<KnnSetScannable>& idToKnn) {
+    static uint64_t topUp(float points[][112], vector<KnnSetScannable>& idToKnn) {
         auto startTopup = hclock::now();
         uint32_t numPoints = idToKnn.size();
 
@@ -418,7 +420,7 @@ struct SolutionKmeans {
         return (min + max) / 2;
     }
 
-    static void splitHorizontalRegroupProcess(vector<vector<float>>& hashes, vector<KnnSetScannable>& idToKnn, uint32_t depth, Range range, uint32_t maxGroupSize, uint32_t numHashFuncs, uint32_t numPoints, float points[][104], vector<uint32_t>& indices) {
+    static void splitHorizontalRegroupProcess(vector<vector<float>>& hashes, vector<KnnSetScannable>& idToKnn, uint32_t depth, Range range, uint32_t maxGroupSize, uint32_t numHashFuncs, uint32_t numPoints, float points[][112], vector<uint32_t>& indices) {
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize || depth == numHashFuncs) {
             addCandidates(points, indices, range, idToKnn);
@@ -440,7 +442,7 @@ struct SolutionKmeans {
         }
     }
 
-    static void splitHorizontal(vector<KnnSetScannable>& idToKnn, uint32_t maxGroupSize, uint32_t numHashFuncs, uint32_t numPoints, float points[][104], vector<uint32_t>& indices) {
+    static void splitHorizontal(vector<KnnSetScannable>& idToKnn, uint32_t maxGroupSize, uint32_t numHashFuncs, uint32_t numPoints, float points[][112], vector<uint32_t>& indices) {
         auto numThreads = std::thread::hardware_concurrency();
         auto hashRanges = splitRange({0, numPoints}, numThreads);
         vector<vector<float>> hashes(numPoints);
@@ -479,9 +481,10 @@ struct SolutionKmeans {
     }
 
 
-    static void constructResult(float points[][104], uint32_t numPoints, vector<vector<uint32_t>>& result) {
+    static void constructResult(float points[][112], uint32_t numPoints, vector<vector<uint32_t>>& result) {
 
-        long timeBoundsMs = (getenv("LOCAL_RUN") || numPoints == 10'000)  ? 20'000 : 1'150'000;
+        auto numThreads = std::thread::hardware_concurrency();
+        long timeBoundsMs = (getenv("LOCAL_RUN") || numPoints == 10'000)  ? 20'000 : 1'650'000;
 
     #ifdef PRINT_OUTPUT
         std::cout << "start run with time bound: " << timeBoundsMs << '\n';
@@ -500,17 +503,20 @@ struct SolutionKmeans {
     #endif
             std::iota(indices.begin(), indices.end(), 0);
             auto startGroupProcess = hclock::now();
-            splitKmeansBinaryProcess({0, numPoints}, 2, 1000, points, indices, idToKnn);
-//            splitHorizontal(idToKnn, 400, requiredHashFuncs(numPoints, 200), numPoints, points, indices);
+            splitKmeansBinaryProcess({0, numPoints}, 1, 400, points, indices, idToKnn);
 
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroupProcess).count();
             std::cout << " group/process time: " << groupDuration << '\n';
             groupProcessTime += groupDuration;
+            uint64_t avgProcessTime = processTime / numThreads;
+            std::cout << " avg group time: " << groupDuration - avgProcessTime << '\n';
+            std::cout << " avg process time: " << avgProcessTime << '\n';
+            processTime = 0;
 
             iteration++;
         }
 
-        topUp(points, idToKnn);
+//        topUp(points, idToKnn);
 
         for (uint32_t id = 0; id < numPoints; ++id) {
             result[id] = idToKnn[id].finalize();

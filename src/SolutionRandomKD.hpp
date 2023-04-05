@@ -65,7 +65,7 @@ struct SolutionRandomKD {
         return sample;
     }
 
-    static vector<double> getMeanSample(float points[][104], vector<uint32_t>& indices, vector<uint32_t>& rangeSample) {
+    static vector<double> getMeanSample(float points[][112], vector<uint32_t>& indices, vector<uint32_t>& rangeSample) {
         tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
         tbb::parallel_for(
             tbb::blocked_range<size_t>(0, rangeSample.size(), 1000),
@@ -90,7 +90,7 @@ struct SolutionRandomKD {
         return sumsGlobal;
     }
 
-    static vector<double> getMean(float points[][104], vector<uint32_t>& indices, Range range) {
+    static vector<double> getMean(float points[][112], vector<uint32_t>& indices, Range range) {
         uint32_t rangeSize = range.second - range.first;
         tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
         tbb::parallel_for(
@@ -115,7 +115,7 @@ struct SolutionRandomKD {
         return sumsGlobal;
     }
 
-    static vector<double> getVariance(vector<double>& means, float points[][104], vector<uint32_t>& indices, Range range) {
+    static vector<double> getVariance(vector<double>& means, float points[][112], vector<uint32_t>& indices, Range range) {
         uint32_t rangeSize = range.second - range.first;
         tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
         tbb::parallel_for(
@@ -143,7 +143,7 @@ struct SolutionRandomKD {
         return sumsGlobal;
     }
 
-    static vector<double> getVarianceSample(vector<double>& means, float points[][104], vector<uint32_t>& indices, vector<uint32_t>& rangeSample) {
+    static vector<double> getVarianceSample(vector<double>& means, float points[][112], vector<uint32_t>& indices, vector<uint32_t>& rangeSample) {
         tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
         tbb::parallel_for(
             tbb::blocked_range<size_t>(0, rangeSample.size(), 1000),
@@ -171,7 +171,7 @@ struct SolutionRandomKD {
         return sumsGlobal;
     }
 
-//    static float getMedian(uint32_t dimIdx, float points[][104], vector<uint32_t> indices, Range range) {
+//    static float getMedian(uint32_t dimIdx, float points[][112], vector<uint32_t> indices, Range range) {
 //        uint32_t rangeSize = range.second - range.first;
 //        tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
 //        tbb::parallel_for(
@@ -196,7 +196,7 @@ struct SolutionRandomKD {
 //        return sumsGlobal;
 //    }
 
-    static uint32_t pickIndex(float points[][104], vector<uint32_t>& indices, vector<uint32_t>& rangeSample) {
+    static uint32_t pickIndex(float points[][112], vector<uint32_t>& indices, vector<uint32_t>& rangeSample) {
         auto means = getMeanSample(points, indices, rangeSample);
         auto variances = getVarianceSample(means, points, indices, rangeSample);
 
@@ -218,7 +218,7 @@ struct SolutionRandomKD {
         return distribution(rd);
     }
 
-    static void split(Range range, uint32_t maxGroupSize, float points[][104], vector<uint32_t>& indices, vector<KnnSetScannable>& idToKnn) {
+    static void split(Range range, uint32_t maxGroupSize, float points[][112], vector<uint32_t>& indices, vector<KnnSetScannable>& idToKnn) {
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize) {
             auto startProcess = hclock::now();
@@ -246,6 +246,7 @@ struct SolutionRandomKD {
 //                sample.push_back(pt[idx]);
 //            }
 
+            // 40 - 60 quantiles?
             std::sort(sample.begin(), sample.end());
             auto median = sample[sample.size() / 2];
             auto splitValue = median;
@@ -259,8 +260,7 @@ struct SolutionRandomKD {
                     auto& [g1, g2] = groupsAgg.local();
                     for (uint32_t i = r.begin(); i < r.end(); ++i) {
                         auto id = indices[i];
-                        auto& pt = points[id];
-                        auto& group = pt[idx] < splitValue ? g1 : g2;
+                        auto& group = points[id][idx] < splitValue ? g1 : g2;
                         group.push_back(id);
                     }
                 }
@@ -293,7 +293,7 @@ struct SolutionRandomKD {
         }
     }
 
-    static void constructResult(float points[][104], uint32_t numPoints, vector<vector<uint32_t>>& result) {
+    static void constructResult(float points[][112], uint32_t numPoints, vector<vector<uint32_t>>& result) {
 
         auto numThreads = std::thread::hardware_concurrency();
         long timeBoundsMs = (getenv("LOCAL_RUN") || numPoints == 10'000)  ? 20'000 : 1'650'000;

@@ -62,7 +62,7 @@ void ReadBin(const std::string &file_path,
   std::cout << "Finish Reading Data" << endl;
 }
 
-std::pair<float(*)[104], uint32_t> ReadBinArray(const std::string &file_path) {
+std::pair<float(*)[112], uint32_t> ReadBinArray(const std::string &file_path) {
 
     std::cout << "Reading Data: " << file_path << std::endl;
     std::ifstream ifs;
@@ -73,7 +73,7 @@ std::pair<float(*)[104], uint32_t> ReadBinArray(const std::string &file_path) {
     ifs.read((char *)&numPoints, sizeof(uint32_t));
     std::cout << "# of points: " << numPoints << std::endl;
 
-    float (*points)[104] = reinterpret_cast<float(*)[104]>(new __m256[(numPoints * 104 * sizeof(float)) / sizeof(__m256)]);
+    float (*points)[112] = static_cast<float(*)[112]>(aligned_alloc(64, numPoints * I112 * sizeof(float)));
 
     const int num_dimensions = 100;
     Vec buff(num_dimensions);

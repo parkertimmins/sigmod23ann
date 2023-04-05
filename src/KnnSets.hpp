@@ -202,7 +202,7 @@ public:
 // KnnSet related functions below
 ///////////////////////////////////////////////////////////////////////////////////////////////
 template<class TKnnSet>
-void addCandidates(float points[][104],
+void addCandidates(float points[][112],
                    vector<uint32_t>& indices,
                    Range range,
                    vector<TKnnSet>& idToKnn) {
@@ -231,7 +231,7 @@ vector<uint32_t> padResult(uint32_t numPoints, vector<vector<uint32_t>>& result)
 }
 
 
-void addCandidatesGroup(float points[][104],
+void addCandidatesGroup(float points[][112],
                         vector<uint32_t>& group,
                         vector<KnnSetScannable>& idToKnn) {
     uint32_t groupSize = group.size();
