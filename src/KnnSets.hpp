@@ -299,31 +299,28 @@ void addCandidatesCopy(
                    float pointsCopy[][112],
                    vector<uint32_t>& indices,
                    Range range,
-                   vector<TKnnSet>& idToKnn) {
+                   vector<TKnnSet>& idToKnn,
+                   vector<TKnnSet>& idToKnnCopy) {
 
-    uint32_t rangeSize = range.second - range.first;
-    vector<vector<float>> dists(rangeSize, vector<float>(rangeSize));
-
+    for (uint32_t i=range.first; i < range.second; ++i) {
+        idToKnnCopy[i] = idToKnn[indices[i]];
+    }
     for (uint32_t i=range.first; i < range.second; ++i) {
         std::memcpy(pointsCopy[i], points[indices[i]], 112 * sizeof(float));
     }
-    for (uint32_t i=0; i < rangeSize-1; ++i) {
-        for (uint32_t j=i+1; j < rangeSize; ++j) {
-            float dist = distance(pointsCopy[i + range.first], pointsCopy[j + range.first]);
-            dists[i][j] = dist;
-            dists[j][i] = dist;
+    for (uint32_t i=range.first; i < range.second-1; ++i) {
+        auto id1 = indices[i];
+        auto& knn1 = idToKnnCopy[i];
+        for (uint32_t j=i+1; j < range.second; ++j) {
+            auto id2 = indices[j];
+            float dist = distance(pointsCopy[i], pointsCopy[j]);
+            auto& knn2 = idToKnnCopy[j];
+            knn1.addCandidate(id2, dist);
+            knn2.addCandidate(id1, dist);
         }
     }
-
-    for (uint32_t i=0; i < rangeSize; ++i) {
-        auto id1 = indices[i + range.first];
-        auto& knn = idToKnn[id1];
-        for (uint32_t j=0; j < rangeSize; ++j) {
-            if (i != j) {
-                auto id2 = indices[j + range.first];
-                knn.addCandidate(id2, dists[i][j]);
-            }
-        }
+    for (uint32_t i=range.first; i < range.second; ++i) {
+        idToKnn[indices[i]] = idToKnnCopy[i];
     }
 }
 

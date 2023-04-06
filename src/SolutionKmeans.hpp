@@ -144,12 +144,13 @@ struct SolutionKmeans {
                                      float points[][112],
                                      float pointsCopy[][112],
                                      vector<uint32_t>& indices,
-                                     vector<KnnSetScannableSimd>& idToKnn
+                                     vector<KnnSetScannableSimd>& idToKnn,
+                                     vector<KnnSetScannableSimd>& idToKnnCopy
     ) {
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize) {
             auto startProcess = hclock::now();
-            addCandidatesCopy(points, pointsCopy, indices, range, idToKnn);
+            addCandidatesCopy(points, pointsCopy, indices, range, idToKnn, idToKnnCopy);
             processTime += duration_cast<milliseconds>(hclock::now() - startProcess).count();
         } else if (rangeSize < 3'000) { // last two splits single threaded in hope of maintain cache locality
             begin_kmeans_small:
@@ -202,8 +203,8 @@ struct SolutionKmeans {
                 goto begin_kmeans_small;
             }
 
-            splitKmeansBinaryProcess(lo, knnIterations, maxGroupSize, points, pointsCopy, indices, idToKnn);
-            splitKmeansBinaryProcess(hi, knnIterations, maxGroupSize, points, pointsCopy, indices, idToKnn);
+            splitKmeansBinaryProcess(lo, knnIterations, maxGroupSize, points, pointsCopy, indices, idToKnn, idToKnnCopy);
+            splitKmeansBinaryProcess(hi, knnIterations, maxGroupSize, points, pointsCopy, indices, idToKnn, idToKnnCopy);
         } else {
             begin_kmeans:
 
@@ -302,8 +303,8 @@ struct SolutionKmeans {
             std::memcpy(it2, group2.data(), group2.size() * sizeof(uint32_t));
 
             tbb::parallel_invoke(
-                [&]{ splitKmeansBinaryProcess(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, idToKnn); },
-                [&]{ splitKmeansBinaryProcess(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices, idToKnn); }
+                [&]{ splitKmeansBinaryProcess(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, idToKnn, idToKnnCopy); },
+                [&]{ splitKmeansBinaryProcess(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices, idToKnn, idToKnnCopy); }
             );
         }
     }
@@ -392,6 +393,7 @@ struct SolutionKmeans {
         long timeBoundsMs = (localRun || numPoints == 10'000)  ? 20'000 : 1'650'000;
 
         float (*pointsCopy)[112] = static_cast<float(*)[112]>(aligned_alloc(64, numPoints * 112 * sizeof(float)));
+        vector<KnnSetScannableSimd> idToKnnCopy(numPoints);
         vector<KnnSetScannableSimd> idToKnn(numPoints);
         std::vector<uint32_t> indices(numPoints);
 
@@ -407,7 +409,7 @@ struct SolutionKmeans {
 
             std::iota(indices.begin(), indices.end(), 0);
             auto startGroupProcess = hclock::now();
-            splitKmeansBinaryProcess({0, numPoints}, 1, 400, points, pointsCopy, indices, idToKnn);
+            splitKmeansBinaryProcess({0, numPoints}, 1, 400, points, pointsCopy, indices, idToKnn, idToKnnCopy);
 
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroupProcess).count();
             std::cout << " group/process time: " << groupDuration << '\n';
