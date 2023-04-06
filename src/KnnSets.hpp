@@ -280,6 +280,29 @@ void addCandidates(float points[][112],
     }
 }
 
+template<class TKnnSet>
+void addCandidatesCopy(
+                   float points[][112],
+                   float pointsCopy[][112],
+                   vector<uint32_t>& indices,
+                   Range range,
+                   vector<TKnnSet>& idToKnn) {
+
+    for (uint32_t i=range.first; i < range.second-1; ++i) {
+        std::memcpy(pointsCopy[i], points[indices[i]], 100 * sizeof(float));
+    }
+    for (uint32_t i=range.first; i < range.second-1; ++i) {
+        auto id1 = indices[i];
+        auto& knn1 = idToKnn[id1];
+        for (uint32_t j=i+1; j < range.second; ++j) {
+            auto id2 = indices[j];
+            float dist = distance(pointsCopy[i], points[j]);
+            knn1.addCandidate(id2, dist);
+            idToKnn[id2].addCandidate(id1, dist);
+        }
+    }
+}
+
 vector<uint32_t> padResult(uint32_t numPoints, vector<vector<uint32_t>>& result) {
     auto unusedId = 1;
     vector<uint32_t> sizes(101);

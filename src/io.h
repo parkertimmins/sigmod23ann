@@ -75,9 +75,9 @@ std::pair<float(*)[112], uint32_t> ReadBinArray(const std::string &file_path) {
     std::cout << "# of points: " << numPoints << std::endl;
 
     auto bytesNeeded = numPoints * 112 * sizeof(float);
-
     float (*points)[112];
-    if (numPoints == 10'000) {
+    bool localRun = getenv("LOCAL_RUN");
+    if (localRun || numPoints == 10'000) {
         points = static_cast<float(*)[112]>(mmap(nullptr, bytesNeeded, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
     } else {
         points = static_cast<float(*)[112]>(mmap(nullptr, bytesNeeded, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0));
