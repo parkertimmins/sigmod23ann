@@ -74,14 +74,8 @@ std::pair<float(*)[112], uint32_t> ReadBinArray(const std::string &file_path) {
     ifs.read((char *)&numPoints, sizeof(uint32_t));
     std::cout << "# of points: " << numPoints << std::endl;
 
-    auto bytesNeeded = numPoints * 112 * sizeof(float);
-    float (*points)[112];
-    bool localRun = getenv("LOCAL_RUN");
-    if (localRun || numPoints == 10'000) {
-        points = static_cast<float(*)[112]>(mmap(nullptr, bytesNeeded, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    } else {
-        points = static_cast<float(*)[112]>(mmap(nullptr, bytesNeeded, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0));
-    }
+    float (*points)[112] = static_cast<float(*)[112]>(aligned_alloc(64, numPoints * 112 * sizeof(float)));
+//    points = static_cast<float(*)[112]>(mmap(nullptr, bytesNeeded, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
 
     const int num_dimensions = 100;
     Vec buff(num_dimensions);

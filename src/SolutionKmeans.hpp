@@ -61,7 +61,7 @@ struct SolutionKmeans {
         while (sample.size() < sampleSize) {
             sample.push_back(distribution(rd));
         }
-        std::sort(sample.begin(), sample.end());
+//        std::sort(sample.begin(), sample.end());
         return sample;
     }
 
@@ -670,17 +670,10 @@ struct SolutionKmeans {
         long timeBoundsMs = (localRun || numPoints == 10'000)  ? 20'000 : 1'650'000;
 
 
-        auto bytesNeeded = numPoints * 112 * sizeof(float);
-        float (*pointsCopy)[112];
-        if (localRun || numPoints == 10'000) {
-            pointsCopy = static_cast<float(*)[112]>(mmap(nullptr, bytesNeeded, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-        } else {
-            pointsCopy = static_cast<float(*)[112]>(mmap(nullptr, bytesNeeded, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0));
-        }
+        float (*pointsCopy)[112] = static_cast<float(*)[112]>(aligned_alloc(64, numPoints * 112 * sizeof(float)));
 
-    #ifdef PRINT_OUTPUT
         std::cout << "start run with time bound: " << timeBoundsMs << '\n';
-    #endif
+
         auto startTime = hclock::now();
         vector<KnnSetScannableSimd> idToKnn(numPoints);
 
@@ -690,10 +683,8 @@ struct SolutionKmeans {
         uint32_t iteration = 0;
 //        while (iteration < 5) {
         while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
-    #ifdef PRINT_OUTPUT
             std::cout << "Iteration: " << iteration << '\n';
-    #endif
-//            std::memcpy(pointsCopy, points, bytesNeeded);
+
             std::iota(indices.begin(), indices.end(), 0);
             auto startGroupProcess = hclock::now();
             splitKmeansBinaryProcess({0, numPoints}, 1, 400, points, pointsCopy, indices, idToKnn);
@@ -718,12 +709,10 @@ struct SolutionKmeans {
 
         auto sizes = padResult(numPoints, result);
 
-    #ifdef PRINT_OUTPUT
         for (uint32_t i=0; i < sizes.size(); ++i) {
             std::cout << "size: " << i << ", count: " << sizes[i] << '\n';
         }
         std::cout << "total grouping/process time (ms): " << groupProcessTime << '\n';
-    #endif
     }
 
 
