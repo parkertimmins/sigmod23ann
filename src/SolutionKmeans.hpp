@@ -662,7 +662,6 @@ struct SolutionKmeans {
         std::cout << "group regroup time: " << duration_cast<milliseconds>(hclock::now() - startRegroup).count() << '\n';
     }
 
-
     static void constructResult(float points[][112], uint32_t numPoints, vector<vector<uint32_t>>& result) {
 
         bool localRun = getenv("LOCAL_RUN");
