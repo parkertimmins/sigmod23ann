@@ -47,9 +47,26 @@ struct SolutionKmeans {
 
     static inline std::atomic<uint64_t> groupProcessTime = 0;
 
+
+    static float calcSamplePercent(uint32_t size) {
+        return pow(log(size) / log(30), 7) / size; // 0.005 for 1e7, around 10% for 10k
+    }
+
     static float calcSamplePercent(uint32_t min, uint32_t max) {
         uint32_t rangeSize = max - min;
         return pow(log(rangeSize) / log(30), 7) / rangeSize; // 0.005 for 1e7, around 10% for 10k
+    }
+
+    static vector<uint32_t> getSampleFromPercent(float perc, uint32_t size) {
+        uint32_t sampleSize = size * perc;
+        vector<uint32_t> sample;
+        sample.reserve(sampleSize);
+        std::uniform_int_distribution<uint32_t> distribution(0, size-1);
+        while (sample.size() < sampleSize) {
+            sample.push_back(distribution(rd));
+        }
+//        std::sort(sample.begin(), sample.end());
+        return sample;
     }
 
     static vector<uint32_t> getSampleFromPercent(float perc, uint32_t min, uint32_t max) {
@@ -64,6 +81,42 @@ struct SolutionKmeans {
 //        std::sort(sample.begin(), sample.end());
         return sample;
     }
+
+
+    static pair<Vec, Vec> kmeansStartVecs(vector<uint32_t>& sampleRange, vector<pair<float[108], uint32_t>>& group) {
+        uint32_t sampleSizeforStarts = pow(log10(group.size()), 2.5); // 129 samples for 10m bucket, 16 samples for bucket of 1220
+        uint32_t sampleSize = std::min(static_cast<uint32_t>(sampleRange.size()), sampleSizeforStarts);
+
+        auto sampleRangeStart = sampleRange.begin();
+        auto sampleRangeEnd = sampleRange.begin() + sampleSize;
+
+        float maxDist = std::numeric_limits<float>::min();
+        float* pii = nullptr;
+        float* pjj = nullptr;
+        for (auto i = sampleRangeStart; i < sampleRangeEnd - 1; ++i) {
+            for (auto j = i + 1; j < sampleRangeEnd; ++j) {
+                float* pi = group[*i].first;
+                float* pj = group[*j].first;
+                float dist = distance(pi, pj);
+                if (dist > maxDist) {
+                    maxDist = dist;
+                    pii = pi;
+                    pjj = pj;
+                }
+            }
+        }
+
+        // copy points into Vec objects
+        Vec center1(dims);
+        Vec center2(dims);
+        // TODO use copy as memcpy not safe
+        for (uint32_t i = 0; i < dims; ++i) {
+            center1[i]  = pii[i];
+            center2[i]  = pjj[i];
+        }
+        return make_pair(center1, center2);
+    }
+
 
     static pair<Vec, Vec> kmeansStartVecs(vector<uint32_t>& sampleRange, Range& range, float points[][112], vector<uint32_t>& indices) {
         uint32_t rangeSize = range.second - range.first;
@@ -99,6 +152,45 @@ struct SolutionKmeans {
         }
         return make_pair(center1, center2);
     }
+
+
+    static pair<Vec, Vec> kmeansStartVecs(vector<pair<float[108], uint32_t>>& groupPoints) {
+        uint32_t sampleSize = pow(log10(groupPoints.size()), 2.5); // 129 samples for 10m bucket, 16 samples for bucket of 1220
+        vector<uint32_t> idSample;
+        idSample.reserve(sampleSize);
+        std::uniform_int_distribution<uint32_t> distribution(0, groupPoints.size() - 1);
+        while (idSample.size() < sampleSize) {
+            idSample.push_back(distribution(rd));
+        }
+
+        float maxDist = std::numeric_limits<float>::min();
+        float* pii = nullptr;
+        float* pjj = nullptr;
+        for (uint32_t i = 0; i < idSample.size() - 1; ++i) {
+            for (uint32_t j = i+1; j < idSample.size(); ++j) {
+                float* pi = groupPoints[idSample[i]].first;
+                float* pj = groupPoints[idSample[j]].first;
+                float dist = distance(pi, pj);
+                if (dist > maxDist) {
+                    maxDist = dist;
+                    pii = pi;
+                    pjj = pj;
+                }
+            }
+        }
+
+        // copy points into Vec objects
+        Vec center1(dims);
+        Vec center2(dims);
+        // TODO use copy as memcpy not safe
+        for (uint32_t i = 0; i < dims; ++i) {
+            center1[i]  = pii[i];
+            center2[i]  = pjj[i];
+        }
+        return make_pair(center1, center2);
+    }
+
+
 
     static pair<Vec, Vec> kmeansStartVecs(Range& range, float points[][112], vector<uint32_t>& indices) {
         uint32_t rangeSize = range.second - range.first;
@@ -316,7 +408,190 @@ struct SolutionKmeans {
         }
     }
 
-    
+
+    // handle both point vector data and array data
+    static void splitKmeansCopy(
+                                 uint32_t knnIterations,
+                                 uint32_t maxGroupSize,
+                                 vector<pair<float[108], uint32_t>> group,
+                                 vector<KnnSetScannableSimd>& idToKnn
+    ) {
+        uint32_t rangeSize = group.size();
+        if (rangeSize < maxGroupSize) {
+            auto startProcess = hclock::now();
+            addCandidatesGroupPoints(group, idToKnn);
+            processTime += duration_cast<milliseconds>(hclock::now() - startProcess).count();
+        } else if (group.size() < 3'000) { // last two splits single threaded in hope of maintain cache locality
+            begin_kmeans_small:
+
+            auto [center1, center2] = kmeansStartVecs(group);
+
+            for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
+                auto between = scalarMult(0.5, add(center1, center2));
+                auto coefs = sub(center1, between);
+                auto offset = dot(between.data(), coefs.data());
+
+                using centroid_agg = pair<uint32_t, vector<double>>;
+                centroid_agg c1 = make_pair(0, vector<double>(100, 0.0));
+                centroid_agg c2 = make_pair(0, vector<double>(100, 0.0));
+
+                for (auto& [pt, id] : group) {
+                    centroid_agg& ca = dot(coefs.data(), pt) >= offset ? c1 : c2;
+                    ca.first++;
+                    for (uint32_t j = 0; j < dims; ++j) { ca.second[j] += pt[j]; }
+                }
+
+                if (c1.first == 0 || c2.first == 0) {
+                    goto begin_kmeans_small;
+                }
+
+                // recompute centers based on averages
+                for (uint32_t i = 0; i < dims; ++i) {
+                    center1[i] = c1.second[i] / c1.first;
+                    center2[i] = c2.second[i] / c2.first;
+                }
+            }
+
+            // compute final groups
+            auto between = scalarMult(0.5, add(center1, center2));
+            auto coefs = sub(center1, between);
+            auto offset = dot(between.data(), coefs.data());
+
+            vector<pair<float[108], uint32_t>> g1;
+            vector<pair<float[108], uint32_t>> g2;
+            for (auto& [pt, id] : group) {
+                auto& g = dot(coefs.data(), pt) >= offset ? g1: g2;
+                g.resize(g.size() + 1);
+                auto& [ptCp, idCp] = g.back();
+                idCp = id;
+                std::memcpy(ptCp, pt, sizeof(float) * 108);
+            }
+
+            if (g1.empty() || g2.empty()) {
+                goto begin_kmeans_small;
+            }
+
+            group.clear();
+            splitKmeansCopy(knnIterations, maxGroupSize, std::move(g1), idToKnn);
+            splitKmeansCopy(knnIterations, maxGroupSize, std::move(g2), idToKnn);
+        } else {
+            begin_kmeans:
+
+            float percSample = calcSamplePercent(group.size());
+            auto sampleRange = getSampleFromPercent(percSample, group.size());
+
+//            std::cout << "rangeSize: " << rangeSize << ", sampleSize: " << sampleRange.size() << "\n";
+            auto [center1, center2] = kmeansStartVecs(sampleRange, group);
+
+            for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
+                auto between = scalarMult(0.5, add(center1, center2));
+                auto coefs = sub(center1, between);
+                auto offset = dot(between.data(), coefs.data());
+                // dot(x, coefs) >= offset means nearer to center1
+
+
+                using centroid_agg = pair<uint32_t, vector<double>>;
+                tbb::combinable<pair<centroid_agg, centroid_agg>> agg(make_pair(make_pair(0, vector<double>(100, 0.0f)), make_pair(0, vector<double>(100, 0.0f))));
+                tbb::parallel_for(
+                        tbb::blocked_range<size_t>(0, sampleRange.size()),
+                        [&](oneapi::tbb::blocked_range<size_t> r) {
+                            auto& [agg1, agg2] = agg.local();
+                            for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                                auto& pt = group[sampleRange[i]].first;;
+                                auto& aggToUse = dot(coefs.data(), pt) >= offset ? agg1 : agg2;
+                                aggToUse.first++;
+                                for (uint32_t j = 0; j < dims; ++j) { aggToUse.second[j] += pt[j]; }
+                            }
+                        }
+                );
+                auto [c1_agg, c2_agg] = agg.combine([](const pair<centroid_agg, centroid_agg>& x, const pair<centroid_agg, centroid_agg>& y) {
+                    centroid_agg c1{0, vector<double>(100, 0.0f)};
+                    centroid_agg c2{0, vector<double>(100, 0.0f)};
+                    c1.first = x.first.first + y.first.first;
+                    c2.first = x.second.first + y.second.first;
+                    for (uint32_t j = 0; j < dims; ++j) {
+                        c1.second[j] = x.first.second[j] + y.first.second[j];
+                        c2.second[j] = x.second.second[j] + y.second.second[j];
+                    }
+                    return make_pair(c1, c2);
+                });
+
+                if (c1_agg.first == 0 || c2_agg.first == 0) {
+                    goto begin_kmeans;
+                }
+
+                // recompute centers based on averages
+                for (uint32_t i = 0; i < dims; ++i) {
+                    center1[i] = c1_agg.second[i] / c1_agg.first;
+                    center2[i] = c2_agg.second[i] / c2_agg.first;
+                }
+            }
+
+            // compute final groups
+            auto between = scalarMult(0.5, add(center1, center2));
+            auto coefs = sub(center1, between);
+            auto offset = dot(between.data(), coefs.data());
+
+            using groups_agg = pair<vector<uint32_t>, vector<uint32_t>>;
+            tbb::combinable<groups_agg> groupsAgg(make_pair<>(vector<uint32_t>(), vector<uint32_t>()));
+            tbb::parallel_for(
+                    tbb::blocked_range<uint32_t>(0, group.size()),
+                    [&](tbb::blocked_range<uint32_t> r) {
+                        auto& [g1, g2] = groupsAgg.local();
+                        for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                            auto& [pt, id] = group[i];
+                            auto& g = dot(coefs.data(), pt) >= offset ? g1 : g2;
+                            g.push_back(i);
+                        }
+                    }
+            );
+            auto [global_g1, global_g2] = groupsAgg.combine([](const groups_agg& x, const groups_agg& y) {
+                vector<uint32_t> g1;
+                vector<uint32_t> g2;
+                g1.insert(g1.end(), x.first.begin(), x.first.end());
+                g1.insert(g1.end(), y.first.begin(), y.first.end());
+                g2.insert(g2.end(), x.second.begin(), x.second.end());
+                g2.insert(g2.end(), y.second.begin(), y.second.end());
+                return make_pair(g1, g2);
+            });
+
+            vector<pair<float[108], uint32_t>> group1(global_g1.size());
+            vector<pair<float[108], uint32_t>> group2(global_g2.size());
+            tbb::parallel_for(
+                tbb::blocked_range<uint32_t>(0, global_g1.size()),
+                [&](tbb::blocked_range<uint32_t> r) {
+                    for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                        auto& [pt, id] = group[global_g1[i]];
+                        auto& [ptCp, idCp] = group1[i];
+                        idCp = id;
+                        std::memcpy(ptCp, pt, sizeof(float) * 108);
+                    }
+                }
+            );
+            tbb::parallel_for(
+                tbb::blocked_range<uint32_t>(0, global_g2.size()),
+                [&](tbb::blocked_range<uint32_t> r) {
+                    for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                        auto& [pt, id] = group[global_g2[i]];
+                        auto& [ptCp, idCp] = group2[i];
+                        idCp = id;
+                        std::memcpy(ptCp, pt, sizeof(float) * 108);
+                    }
+                }
+            );
+
+
+
+
+            group.clear();
+            tbb::parallel_invoke(
+                    [&]{ splitKmeansCopy(knnIterations, maxGroupSize, std::move(group1), idToKnn); },
+                    [&]{ splitKmeansCopy(knnIterations, maxGroupSize, std::move(group2), idToKnn); }
+            );
+        }
+    }
+
+
     // handle both point vector data and array data
     static void splitKmeansBinaryProcess(Range range,
                                      uint32_t knnIterations,
@@ -669,25 +944,34 @@ struct SolutionKmeans {
         long timeBoundsMs = (localRun || numPoints == 10'000)  ? 20'000 : 1'650'000;
 
 
-        float (*pointsCopy)[112] = static_cast<float(*)[112]>(aligned_alloc(64, numPoints * 112 * sizeof(float)));
-
         std::cout << "start run with time bound: " << timeBoundsMs << '\n';
 
         auto startTime = hclock::now();
         vector<KnnSetScannableSimd> idToKnn(numPoints);
 
         // rewrite point data in adjacent memory and sort in a group order
-        std::vector<uint32_t> indices(numPoints);
 
         uint32_t iteration = 0;
 //        while (iteration < 5) {
         while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
             std::cout << "Iteration: " << iteration << '\n';
-
-            std::iota(indices.begin(), indices.end(), 0);
             auto startGroupProcess = hclock::now();
-            splitKmeansBinaryProcess({0, numPoints}, 1, 400, points, pointsCopy, indices, idToKnn);
-//            splitKmeandStdThreadins(numThreads, {0, numPoints}, 1, 400, points, indices, idToKnn);
+
+            vector<pair<float[108], uint32_t>> groups(numPoints);
+            tbb::parallel_for(
+                tbb::blocked_range<uint32_t>(0, groups.size()),
+                [&](tbb::blocked_range<uint32_t> r) {
+                    for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                        auto& [pt, id] = groups[i];
+                        id = i;
+                        std::memcpy(pt, points[i], sizeof(float) * 108);
+                    }
+                }
+            );
+
+
+            splitKmeansCopy(1, 400, std::move(groups), idToKnn);
+//            splitKmeansBinaryProcess({0, numPoints}, 1, 400, points, pointsCopy, indices, idToKnn);
 
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroupProcess).count();
             std::cout << " group/process time: " << groupDuration << '\n';

@@ -281,6 +281,22 @@ void addCandidates(float points[][112],
 }
 
 template<class TKnnSet>
+void addCandidatesGroupPoints(
+                   vector<pair<float[108], uint32_t>>& groupPoints,
+                   vector<TKnnSet>& idToKnn) {
+    for (uint32_t i=0; i < groupPoints.size() - 1; ++i) {
+        auto& [pt1, id1] = groupPoints[i];
+        auto& knn1 = idToKnn[id1];
+        for (uint32_t j=i+1; j < groupPoints.size(); ++j) {
+            auto& [pt2, id2] = groupPoints[j];
+            float dist = distance(pt1, pt2);
+            knn1.addCandidate(id2, dist);
+            idToKnn[id2].addCandidate(id1, dist);
+        }
+    }
+}
+
+template<class TKnnSet>
 void addCandidatesCopy(
                    float points[][112],
                    float pointsCopy[][112],
