@@ -30,6 +30,19 @@ public:
     uint32_t size = 0;
     float lower_bound = 0; // 0 -> max val in first 100 -> decreases
     uint32_t lowerBoundIdx = -1;
+
+    KnnSetScannableSimd& operator=(const KnnSetScannableSimd& other)
+    {
+        if (this != &other) {
+            std::copy(other.dists, other.dists + 104, dists);
+            std::copy(other.current_ids, other.current_ids + 100, current_ids);
+            size = other.size;
+            lower_bound = other.lower_bound;
+            lowerBoundIdx = other.lowerBoundIdx;
+        }
+        return *this;
+    }
+
     bool contains(uint32_t node) {
         for (uint32_t i = 0; i < size; ++i) {
             if (current_ids[i] == node) { return true; }
@@ -286,20 +299,28 @@ void addCandidatesCopy(
                    float pointsCopy[][112],
                    vector<uint32_t>& indices,
                    Range range,
-                   vector<TKnnSet>& idToKnn) {
+                   vector<TKnnSet>& idToKnn,
+                   vector<TKnnSet>& idToKnnCopy) {
 
+    for (uint32_t i=range.first; i < range.second; ++i) {
+        idToKnnCopy[i] = idToKnn[indices[i]];
+    }
     for (uint32_t i=range.first; i < range.second; ++i) {
         std::memcpy(pointsCopy[i], points[indices[i]], 112 * sizeof(float));
     }
     for (uint32_t i=range.first; i < range.second-1; ++i) {
         auto id1 = indices[i];
-        auto& knn1 = idToKnn[id1];
+        auto& knn1 = idToKnnCopy[i];
         for (uint32_t j=i+1; j < range.second; ++j) {
             auto id2 = indices[j];
             float dist = distance(pointsCopy[i], pointsCopy[j]);
+            auto& knn2 = idToKnnCopy[j];
             knn1.addCandidate(id2, dist);
-            idToKnn[id2].addCandidate(id1, dist);
+            knn2.addCandidate(id1, dist);
         }
+    }
+    for (uint32_t i=range.first; i < range.second; ++i) {
+        idToKnn[indices[i]] = idToKnnCopy[i];
     }
 }
 
