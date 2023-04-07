@@ -204,8 +204,8 @@ float dot(const float* lhs, const float* rhs) {
     auto* r = rhs;
     auto* l = lhs;
     for (uint32_t i = 0; i < 96; i+=16) {
-        __m512 rs = _mm512_load_ps(r);
-        __m512 ls = _mm512_load_ps(l);
+        __m512 rs = _mm512_loadu_ps(r);
+        __m512 ls = _mm512_loadu_ps(l);
         sum = _mm512_fmadd_ps(rs, ls, sum);
         l += 16;
         r += 16;
