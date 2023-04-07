@@ -78,8 +78,8 @@ float distance(const float* lhs, const float* rhs) {
     auto* r = rhs;
     auto* l = lhs;
     for (uint32_t i = 0; i < 96; i+=8) {
-        __m256 rs = _mm256_load_ps(r);
-        __m256 ls = _mm256_load_ps(l);
+        __m256 rs = _mm256_loadu_ps(r);
+        __m256 ls = _mm256_loadu_ps(l);
         __m256 diff = _mm256_sub_ps(ls, rs);
         sum = _mm256_fmadd_ps(diff, diff, sum);
         r += 8;
@@ -149,18 +149,6 @@ void plusEq(float* lhs, float* rhs) {
     }
 }
 
-//void plusEq(Vec& lhs, const Vec& rhs) {
-//    auto* r = const_cast<float*>(rhs.data());
-//    auto* l = const_cast<float*>(lhs.data());
-//    for (uint32_t i = 0; i < 100; i+=4) {
-//        __m128 ls = _mm_load_ps(l);
-//        __m128 rs = _mm_load_ps(r);
-//        __m128 sum = _mm_add_ps(ls, rs);
-//        _mm_store_ps(l, sum);
-//        l += 4;
-//        r += 4;
-//    }
-//}
 
 Vec add(const Vec& lhs, const Vec& rhs) {
     auto dim = lhs.size();
@@ -227,8 +215,8 @@ float dot(const float* lhs, const float* rhs) {
     auto* r = rhs;
     auto* l = lhs;
     for (uint32_t i = 0; i < 96; i+=8) {
-        __m256 rs = _mm256_load_ps(r);
-        __m256 ls = _mm256_load_ps(l);
+        __m256 rs = _mm256_loadu_ps(r);
+        __m256 ls = _mm256_loadu_ps(l);
         sum = _mm256_fmadd_ps(rs, ls, sum);
         l += 8;
         r += 8;
