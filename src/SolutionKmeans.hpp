@@ -102,7 +102,7 @@ struct SolutionKmeans {
 
 
 
-    static pair<uint32_t, uint32_t> kmeansStartVecsIndices(vector<uint32_t>& sampleRange, Range& range, float points[][112], vector<uint32_t>& indices) {
+    static pair<uint32_t, uint32_t> kmeansStartVecsIndices(vector<uint32_t>& sampleRange, Range& range, short points[][100], vector<uint32_t>& indices) {
         uint32_t rangeSize = range.second - range.first;
         uint32_t sampleSizeforStarts = pow(log10(rangeSize), 2.5); // 129 samples for 10m bucket, 16 samples for bucket of 1220
         uint32_t sampleSize = std::min(static_cast<uint32_t>(sampleRange.size()), sampleSizeforStarts);
@@ -110,14 +110,14 @@ struct SolutionKmeans {
         auto sampleRangeStart = sampleRange.begin();
         auto sampleRangeEnd = sampleRange.begin() + sampleSize;
 
-        float maxDist = std::numeric_limits<float>::min();
+        short maxDist = std::numeric_limits<short>::min();
         uint32_t ii;
         uint32_t jj;
         for (auto i = sampleRangeStart; i < sampleRangeEnd - 1; ++i) {
             for (auto j = i + 1; j < sampleRangeEnd; ++j) {
-                float* pi = points[indices[*i]];
-                float* pj = points[indices[*j]];
-                float dist = distance(pi, pj);
+                short* pi = points[indices[*i]];
+                short* pj = points[indices[*j]];
+                short dist = distance(pi, pj);
                 if (dist > maxDist) {
                     maxDist = dist;
                     ii = indices[*i];
@@ -130,7 +130,7 @@ struct SolutionKmeans {
     }
 
 
-    static pair<uint32_t, uint32_t> kmeansStartVecsIndices(Range& range, float points[][112], vector<uint32_t>& indices) {
+    static pair<uint32_t, uint32_t> kmeansStartVecsIndices(Range& range, short points[][100], vector<uint32_t>& indices) {
         uint32_t rangeSize = range.second - range.first;
         uint32_t sampleSize = pow(log10(rangeSize), 2.5); // 129 samples for 10m bucket, 16 samples for bucket of 1220
         vector<uint32_t> idSample;
@@ -140,14 +140,14 @@ struct SolutionKmeans {
             idSample.push_back(indices[distribution(rd)]);
         }
 
-        float maxDist = std::numeric_limits<float>::min();
+        short maxDist = std::numeric_limits<short>::min();
         uint32_t ii;
         uint32_t jj;
         for (uint32_t i = 0; i < idSample.size() - 1; ++i) {
             for (uint32_t j = i+1; j < idSample.size(); ++j) {
-                float* pi = points[idSample[i]];
-                float* pj = points[idSample[j]];
-                float dist = distance(pi, pj);
+                short* pi = points[idSample[i]];
+                short* pj = points[idSample[j]];
+                short dist = distance(pi, pj);
                 if (dist > maxDist) {
                     maxDist = dist;
                     ii = idSample[i];
@@ -221,8 +221,7 @@ struct SolutionKmeans {
     static void splitKmeansBinaryProcess(Range range,
                                      uint32_t knnIterations,
                                      uint32_t maxGroupSize,
-                                     float points[][112],
-                                     float pointsCopy[][112],
+                                     short pointsCopy[][100],
                                      short pointsShort[][100],
                                      vector<uint32_t>& indices,
                                      vector<KnnSetScannableSimd>& idToKnn
@@ -230,12 +229,12 @@ struct SolutionKmeans {
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize) {
             auto startProcess = hclock::now();
-            addCandidatesCopy(points, pointsCopy, indices, range, idToKnn);
+            addCandidatesCopy(pointsCopy, pointsShort, indices, range, idToKnn);
             processTime += duration_cast<milliseconds>(hclock::now() - startProcess).count();
         } else if (rangeSize < 3'000) { // last two splits single threaded in hope of maintain cache locality
             begin_kmeans_small:
 
-            auto [ci, cj] = kmeansStartVecsIndices(range, points, indices);
+            auto [ci, cj] = kmeansStartVecsIndices(range, pointsShort, indices);
             short* center1 = pointsShort[ci];
             short* center2 = pointsShort[cj];
 
@@ -285,8 +284,8 @@ struct SolutionKmeans {
                 goto begin_kmeans_small;
             }
 
-            splitKmeansBinaryProcess(lo, knnIterations, maxGroupSize, points, pointsCopy, pointsShort, indices, idToKnn);
-            splitKmeansBinaryProcess(hi, knnIterations, maxGroupSize, points, pointsCopy, pointsShort, indices, idToKnn);
+            splitKmeansBinaryProcess(lo, knnIterations, maxGroupSize, pointsCopy, pointsShort, indices, idToKnn);
+            splitKmeansBinaryProcess(hi, knnIterations, maxGroupSize, pointsCopy, pointsShort, indices, idToKnn);
         } else {
             begin_kmeans:
 
@@ -294,7 +293,7 @@ struct SolutionKmeans {
             auto sampleRange = getSampleFromPercent(percSample, range.first, range.second);
 
 //            std::cout << "rangeSize: " << rangeSize << ", sampleSize: " << sampleRange.size() << "\n";
-            auto [ci, cj] = kmeansStartVecsIndices(sampleRange, range, points, indices);
+            auto [ci, cj] = kmeansStartVecsIndices(sampleRange, range, pointsShort, indices);
             short* center1 = pointsShort[ci];
             short* center2 = pointsShort[cj];
 
@@ -385,8 +384,8 @@ struct SolutionKmeans {
             std::memcpy(it2, group2.data(), group2.size() * sizeof(uint32_t));
 
             tbb::parallel_invoke(
-                [&]{ splitKmeansBinaryProcess(subRange1, knnIterations, maxGroupSize, points, pointsCopy, pointsShort, indices, idToKnn); },
-                [&]{ splitKmeansBinaryProcess(subRange2, knnIterations, maxGroupSize, points, pointsCopy, pointsShort, indices, idToKnn); }
+                [&]{ splitKmeansBinaryProcess(subRange1, knnIterations, maxGroupSize, pointsCopy, pointsShort, indices, idToKnn); },
+                [&]{ splitKmeansBinaryProcess(subRange2, knnIterations, maxGroupSize, pointsCopy, pointsShort, indices, idToKnn); }
             );
         }
     }
@@ -474,10 +473,10 @@ struct SolutionKmeans {
         auto numThreads = std::thread::hardware_concurrency();
         long timeBoundsMs = (localRun || numPoints == 10'000)  ? 20'000 : 1'650'000;
 
-
-        float (*pointsCopy)[112] = static_cast<float(*)[112]>(aligned_alloc(64, numPoints * 112 * sizeof(float)));
         short (*pointsShort)[100] = static_cast<short(*)[100]>(aligned_alloc(64, numPoints * 100 * sizeof(short)));
         convertTo16bitRepresentation(points, numPoints, pointsShort);
+        free(points);
+        short (*pointsCopy)[100] = static_cast<short(*)[100]>(aligned_alloc(64, numPoints * 100 * sizeof(short)));
 
         std::cout << "start run with time bound: " << timeBoundsMs << '\n';
 
@@ -488,13 +487,13 @@ struct SolutionKmeans {
         std::vector<uint32_t> indices(numPoints);
 
         uint32_t iteration = 0;
-//        while (iteration < 5) {
-        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
+        while (iteration < 5) {
+//        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
             std::cout << "Iteration: " << iteration << '\n';
 
             std::iota(indices.begin(), indices.end(), 0);
             auto startGroupProcess = hclock::now();
-            splitKmeansBinaryProcess({0, numPoints}, 1, 400, points, pointsCopy, pointsShort, indices, idToKnn);
+            splitKmeansBinaryProcess({0, numPoints}, 1, 400, pointsCopy, pointsShort, indices, idToKnn);
 //            splitKmeandStdThreadins(numThreads, {0, numPoints}, 1, 400, points, indices, idToKnn);
 
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroupProcess).count();

@@ -208,7 +208,8 @@ float dot(const float* lhs, const float* rhs) {
 }
 
 
-long dot(short* lhs, short* rhs) {
+
+long dotSimd(short* lhs, short* rhs) {
     __m256i sum  = _mm256_set1_epi32(0);
     auto* r = rhs;
     auto* l = lhs;
@@ -233,6 +234,22 @@ long dot(short* lhs, short* rhs) {
 }
 
 
+long dot(short* lhs, short* rhs) {
+    long sum = 0;
+    for (uint32_t i = 0; i < 100; ++i) {
+        sum += lhs[i] * rhs[i];
+    }
+    return sum;
+}
+
+uint32_t distance(short* lhs, short* rhs) {
+    long sum = 0;
+    for (uint32_t i = 0; i < 100; ++i) {
+        int diff = lhs[i] - rhs[i];
+        sum += diff * diff;
+    }
+    return sqrt(sum);
+}
 
 // project v onto u
 Vec project(const Vec& u, const Vec& v) {
