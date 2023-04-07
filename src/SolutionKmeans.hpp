@@ -43,6 +43,7 @@ using std::make_pair;
 using std::pair;
 using std::vector;
 
+
 struct SolutionKmeans {
 
     static inline std::atomic<uint64_t> groupProcessTime = 0;

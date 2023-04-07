@@ -38,6 +38,13 @@ using hclock = std::chrono::high_resolution_clock;
 using std::vector;
 
 int main(int argc, char **argv) {
+
+#ifdef USE_AVX512
+    std::cout << "use avx512\n" ;
+#else // DEF1
+    std::cout << "use avx2\n" ;
+#endif
+
   auto startTime = hclock::now();
 
   string source_path = "dummy-data.bin";

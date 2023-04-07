@@ -46,9 +46,33 @@ float dotPartial(vector<uint32_t>& dimensions, const float* lhs, const float* rh
 
 
 
+#ifdef USE_AVX512
+float distance(const float* lhs, const float* rhs) {
+    __m512 sum  = _mm512_set1_ps(0);
+    auto* r = rhs;
+    auto* l = lhs;
+    for (uint32_t i = 0; i < 96; i+=16) {
+        __m512 rs = _mm512_loadu_ps(r);
+        __m512 ls = _mm512_loadu_ps(l);
+        __m512 diff = _mm512_sub_ps(ls, rs);
+        sum = _mm512_fmadd_ps(diff, diff, sum);
+        r += 16;
+        l += 16;
+    }
 
-
-
+    alignas(sizeof(__m512)) float sums[16] = {};
+    _mm512_store_ps(sums, sum);
+    float ans = 0.0f;
+    for (float s: sums) {
+        ans += s;
+    }
+    for (unsigned i = 96; i < dims; ++i) {
+        auto d = (lhs[i] - rhs[i]);
+        ans += (d * d);
+    }
+    return ans;
+}
+#else
 float distance(const float* lhs, const float* rhs) {
     __m256 sum  = _mm256_set1_ps(0);
     auto* r = rhs;
@@ -74,6 +98,7 @@ float distance(const float* lhs, const float* rhs) {
     }
     return ans;
 }
+#endif
 
 double norm(const Vec& vec) {
     float sumSquares = 0.0;
@@ -172,6 +197,31 @@ Vec scalarMult(float c, const Vec& vec) {
     return res;
 }
 
+
+#ifdef USE_AVX512
+float dot(const float* lhs, const float* rhs) {
+    __m512 sum  = _mm512_set1_ps(0);
+    auto* r = rhs;
+    auto* l = lhs;
+    for (uint32_t i = 0; i < 96; i+=16) {
+        __m512 rs = _mm512_load_ps(r);
+        __m512 ls = _mm512_load_ps(l);
+        sum = _mm512_fmadd_ps(rs, ls, sum);
+        l += 16;
+        r += 16;
+    }
+    alignas(sizeof(__m512)) float sums[16] = {};
+    _mm512_store_ps(sums, sum);
+    float ans = 0.0f;
+    for (float s: sums) {
+        ans += s;
+    }
+    for (unsigned i = 96; i < dims; ++i) {
+        ans += (lhs[i] * rhs[i]);
+    }
+    return ans;
+}
+#else
 float dot(const float* lhs, const float* rhs) {
     __m256 sum  = _mm256_set1_ps(0);
     auto* r = rhs;
@@ -194,7 +244,7 @@ float dot(const float* lhs, const float* rhs) {
     }
     return ans;
 }
-
+#endif
 
 // project v onto u
 Vec project(const Vec& u, const Vec& v) {
