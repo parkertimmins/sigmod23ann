@@ -45,9 +45,21 @@ float dotPartial(vector<uint32_t>& dimensions, const float* lhs, const float* rh
 }
 
 
+vector<short> sub(short* lhs, short* rhs) {
+    vector<short> res(100);
+    for (uint32_t i = 0; i < 100; ++i) {
+        res[i] = lhs[i] - rhs[i];
+    }
+    return res;
+}
 
-
-
+vector<short> avg(short* lhs, short* rhs) {
+    vector<short> res(100);
+    for (uint32_t i = 0; i < 100; ++i) {
+        res[i] = (static_cast<int>(lhs[i]) + static_cast<int>(rhs[i])) / 2;
+    }
+    return res;
+}
 
 float distance(const float* lhs, const float* rhs) {
     __m256 sum  = _mm256_set1_ps(0);
@@ -194,6 +206,32 @@ float dot(const float* lhs, const float* rhs) {
     }
     return ans;
 }
+
+
+int dot(short* lhs, short* rhs) {
+    __m256i sum  = _mm256_set1_epi32(0);
+    auto* r = rhs;
+    auto* l = lhs;
+    for (uint32_t i = 0; i < 96; i+=16) {
+        __m256i rs = _mm256_loadu_si256(reinterpret_cast<__m256i*>(r));
+        __m256i ls = _mm256_loadu_si256(reinterpret_cast<__m256i*>(l));
+        __m256i partialSum = _mm256_madd_epi16(rs, ls);
+        sum = _mm256_add_epi32(sum, partialSum);
+        l += 16;
+        r += 16;
+    }
+    int sums[8] = {};
+    _mm256_storeu_si256(reinterpret_cast<__m256i*>(sums), sum);
+    int ans = 0;
+    for (int s: sums) {
+        ans += s;
+    }
+    for (unsigned i = 96; i < dims; ++i) {
+        ans += (static_cast<int>(lhs[i]) * static_cast<int>(rhs[i]));
+    }
+    return ans;
+}
+
 
 
 // project v onto u
