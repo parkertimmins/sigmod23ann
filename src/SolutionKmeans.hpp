@@ -294,7 +294,7 @@ struct SolutionKmeans {
             auto sampleRange = getSampleFromPercent(percSample, range.first, range.second);
 
 //            std::cout << "rangeSize: " << rangeSize << ", sampleSize: " << sampleRange.size() << "\n";
-            auto [ci, cj] = kmeansStartVecsIndices(range, points, indices);
+            auto [ci, cj] = kmeansStartVecsIndices(sampleRange, range, points, indices);
             short* center1 = pointsShort[ci];
             short* center2 = pointsShort[cj];
 

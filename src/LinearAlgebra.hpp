@@ -208,7 +208,7 @@ float dot(const float* lhs, const float* rhs) {
 }
 
 
-int dot(short* lhs, short* rhs) {
+long dot(short* lhs, short* rhs) {
     __m256i sum  = _mm256_set1_epi32(0);
     auto* r = rhs;
     auto* l = lhs;
@@ -222,7 +222,7 @@ int dot(short* lhs, short* rhs) {
     }
     int sums[8] = {};
     _mm256_storeu_si256(reinterpret_cast<__m256i*>(sums), sum);
-    int ans = 0;
+    long ans = 0;
     for (int s: sums) {
         ans += s;
     }
