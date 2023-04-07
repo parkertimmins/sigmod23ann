@@ -25,10 +25,10 @@ using std::tuple;
 
 struct alignas(64) KnnSetScannableSimd {
 public:
-    uint32_t dists[100] = { 0 };
-    uint32_t current_ids[100] = {};
+    alignas(sizeof(__m256)) float dists[104] = { 0 };
+    alignas(sizeof(__m256)) uint32_t current_ids[100] = {};
     uint32_t size = 0;
-    uint32_t lower_bound = 0; // 0 -> max val in first 100 -> decreases
+    float lower_bound = 0; // 0 -> max val in first 100 -> decreases
     uint32_t lowerBoundIdx = -1;
     bool contains(uint32_t node) {
         for (uint32_t i = 0; i < size; ++i) {
@@ -37,7 +37,22 @@ public:
         return false;
     }
 
-    uint32_t append(const uint32_t candidate_id, uint32_t dist) {
+    bool containsFull(uint32_t node) {
+        __m256i pattern = _mm256_set1_epi32(node);
+        auto* ids = current_ids;
+        for (uint32_t i = 0; i < 96; i+=8) {
+            auto block = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(ids));
+            auto match = _mm256_movemask_epi8(_mm256_cmpeq_epi32(pattern, block));
+            if (match) { return true; }
+            ids += 8;
+        }
+        for (uint32_t i = 96; i < size; ++i) {
+            if (current_ids[i] == node) { return true; }
+        }
+        return false;
+    }
+
+    uint32_t append(const uint32_t candidate_id, float dist) {
         auto idx = size;
         current_ids[idx] = candidate_id;
         dists[idx] = dist;
@@ -46,19 +61,38 @@ public:
     }
 
     uint32_t getMaxIdx() {
-        uint32_t maxVal = 0;
+        auto* distances = dists;
+        __m256 maxes = _mm256_load_ps(distances);
+        __m256i maxIndices = _mm256_set_epi32(7, 6, 5, 4, 3, 2, 1, 0);
+        __m256i currIndices = _mm256_set_epi32(15, 14, 13, 12, 11, 10, 9, 8);
+        __m256i inc = _mm256_set1_epi32(8);
+        distances+=8;
+        for (uint32_t i = 8; i < 104; i+=8) {
+            __m256 block = _mm256_load_ps(distances);
+            __m256i gt = _mm256_castps_si256(_mm256_cmp_ps(block, maxes, _CMP_GT_OS));
+            maxIndices = _mm256_blendv_epi8(maxIndices, currIndices, gt);
+            maxes = _mm256_castsi256_ps(_mm256_blendv_epi8(_mm256_castps_si256(maxes), _mm256_castps_si256(block), gt));
+            currIndices = _mm256_add_epi32(currIndices, inc);
+            distances += 8;
+        }
+
+        alignas(sizeof(__m256)) float maxArr[8] = {};
+        uint32_t maxIdxArr[8] = {};
+        _mm256_store_ps(maxArr, maxes);
+        _mm256_storeu_si256(reinterpret_cast<__m256i*>(maxIdxArr), maxIndices);
+        float max = std::numeric_limits<float>::min();
         uint32_t maxIdx = -1;
-        for (uint32_t i = 0; i < 100; ++i) {
-            if (dists[i] > maxVal) {
-                maxVal = dists[i];
-                maxIdx = i;
+        for (uint32_t i = 0; i < 8; ++i) {
+            if (maxArr[i] > max) {
+                max = maxArr[i];
+                maxIdx = maxIdxArr[i];
             }
         }
         return maxIdx;
     }
 
     // This may misorder nodes of equal sizes
-    void addCandidate(const uint32_t candidate_id, uint32_t dist) {
+    void addCandidate(const uint32_t candidate_id, float dist) {
         if (size < k) {
             if (!contains(candidate_id)) {
                 auto idx = append(candidate_id, dist);
@@ -68,7 +102,7 @@ public:
                 }
             }
         } else if (dist < lower_bound) {
-            if (!contains(candidate_id)) {
+            if (!containsFull(candidate_id)) {
                 dists[lowerBoundIdx] = dist;
                 current_ids[lowerBoundIdx] = candidate_id;
                 lowerBoundIdx = getMaxIdx();
@@ -262,7 +296,7 @@ void addCandidatesCopy(
         auto& knn1 = idToKnn[id1];
         for (uint32_t j=i+1; j < range.second; ++j) {
             auto id2 = indices[j];
-            uint32_t dist = distance(pointsCopy[i], pointsCopy[j]);
+            float dist = distance(pointsCopy[i], pointsCopy[j]);
             knn1.addCandidate(id2, dist);
             idToKnn[id2].addCandidate(id1, dist);
         }

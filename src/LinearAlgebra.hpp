@@ -233,22 +233,21 @@ long dotSimd(short* lhs, short* rhs) {
     return ans;
 }
 
-
 long dot(short* lhs, short* rhs) {
     long sum = 0;
     for (uint32_t i = 0; i < 100; ++i) {
-        sum += lhs[i] * rhs[i];
+        sum += static_cast<int>(lhs[i]) * static_cast<int>(rhs[i]);
     }
     return sum;
 }
 
-uint32_t distance(short* lhs, short* rhs) {
+float distance(short* lhs, short* rhs) {
     long sum = 0;
     for (uint32_t i = 0; i < 100; ++i) {
         int diff = lhs[i] - rhs[i];
         sum += diff * diff;
     }
-    return sqrt(sum);
+    return static_cast<float>(sum);
 }
 
 // project v onto u
