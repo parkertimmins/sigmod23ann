@@ -62,25 +62,24 @@ struct SolutionKmeans {
         while (sample.size() < sampleSize) {
             sample.push_back(distribution(rd));
         }
-        std::sort(sample.begin(), sample.end());
         return sample;
     }
 
-    static pair<Vec, Vec> kmeansStartVecs(vector<uint32_t>& sampleRange, Range& range, float points[][112], vector<uint32_t>& indices) {
+    static pair<Vec, Vec> kmeansStartVecs(vector<uint32_t>& sampleIndices, Range& range, float points[][112]) {
         uint32_t rangeSize = range.second - range.first;
         uint32_t sampleSizeforStarts = pow(log10(rangeSize), 2.5); // 129 samples for 10m bucket, 16 samples for bucket of 1220
-        uint32_t sampleSize = std::min(static_cast<uint32_t>(sampleRange.size()), sampleSizeforStarts);
+        uint32_t sampleSize = std::min(static_cast<uint32_t>(sampleIndices.size()), sampleSizeforStarts);
 
-        auto sampleRangeStart = sampleRange.begin();
-        auto sampleRangeEnd = sampleRange.begin() + sampleSize;
+        auto sampleIndicesStart = sampleIndices.begin();
+        auto sampleIndicesEnd = sampleIndices.begin() + sampleSize;
 
         float maxDist = std::numeric_limits<float>::min();
         float* pii = nullptr;
         float* pjj = nullptr;
-        for (auto i = sampleRangeStart; i < sampleRangeEnd - 1; ++i) {
-            for (auto j = i + 1; j < sampleRangeEnd; ++j) {
-                float* pi = points[indices[*i]];
-                float* pj = points[indices[*j]];
+        for (auto i = sampleIndicesStart; i < sampleIndicesEnd - 1; ++i) {
+            for (auto j = i + 1; j < sampleIndicesEnd; ++j) {
+                float* pi = points[*i];
+                float* pj = points[*j];
                 float dist = distance(pi, pj);
                 if (dist > maxDist) {
                     maxDist = dist;
@@ -213,7 +212,15 @@ struct SolutionKmeans {
             auto sampleRange = getSampleFromPercent(percSample, range.first, range.second);
 
 //            std::cout << "rangeSize: " << rangeSize << ", sampleSize: " << sampleRange.size() << "\n";
-            auto [center1, center2] = kmeansStartVecs(sampleRange, range, points, indices);
+
+            vector<uint32_t> sampleIndices;
+            sampleIndices.reserve(sampleRange.size());
+            for (auto& i : sampleRange) {
+                sampleIndices.push_back(indices[i]);
+            }
+            sort(sampleIndices.begin(), sampleIndices.end());
+
+            auto [center1, center2] = kmeansStartVecs(sampleIndices, range, points);
 
             for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
                 auto between = scalarMult(0.5, add(center1, center2));
@@ -225,11 +232,11 @@ struct SolutionKmeans {
                 using centroid_agg = pair<uint32_t, vector<double>>;
                 tbb::combinable<pair<centroid_agg, centroid_agg>> agg(make_pair(make_pair(0, vector<double>(100, 0.0f)), make_pair(0, vector<double>(100, 0.0f))));
                 tbb::parallel_for(
-                    tbb::blocked_range<size_t>(0, sampleRange.size()),
+                    tbb::blocked_range<size_t>(0, sampleIndices.size()),
                     [&](oneapi::tbb::blocked_range<size_t> r) {
                         auto& [agg1, agg2] = agg.local();
                         for (uint32_t i = r.begin(); i < r.end(); ++i) {
-                            auto& pt = points[indices[sampleRange[i]]];
+                            auto& pt = points[i];
                             auto& aggToUse = dot(coefs.data(), pt) >= offset ? agg1 : agg2;
                             aggToUse.first++;
                             for (uint32_t j = 0; j < dims; ++j) { aggToUse.second[j] += pt[j]; }
