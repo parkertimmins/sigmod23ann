@@ -92,7 +92,7 @@ public:
     }
 
     // This may misorder nodes of equal sizes
-    void addCandidate(const uint32_t candidate_id, float dist) {
+    bool addCandidate(const uint32_t candidate_id, float dist) {
         if (size < k) {
             if (!contains(candidate_id)) {
                 auto idx = append(candidate_id, dist);
@@ -100,6 +100,7 @@ public:
                     lower_bound = dist;
                     lowerBoundIdx = idx;
                 }
+                return true;
             }
         } else if (dist < lower_bound) {
             if (!containsFull(candidate_id)) {
@@ -107,8 +108,10 @@ public:
                 current_ids[lowerBoundIdx] = candidate_id;
                 lowerBoundIdx = getMaxIdx();
                 lower_bound = dists[lowerBoundIdx];
+                return true;
             }
         }
+        return false;
     }
 
     vector<uint32_t> finalize() {
