@@ -282,14 +282,14 @@ void addCandidates(float points[][112],
 
 template<class TKnnSet>
 void addCandidatesCopy(
-                   short pointsCopy[][100],
-                   short pointsShort[][100],
+                   float points[][112],
+                   float pointsCopy[][112],
                    vector<uint32_t>& indices,
                    Range range,
                    vector<TKnnSet>& idToKnn) {
 
-    for (uint32_t i=range.first; i < range.second-1; ++i) {
-        std::memcpy(pointsCopy[i], pointsShort[indices[i]], 100 * sizeof(short));
+    for (uint32_t i=range.first; i < range.second; ++i) {
+        std::memcpy(pointsCopy[i], points[indices[i]], 100 * sizeof(float));
     }
     for (uint32_t i=range.first; i < range.second-1; ++i) {
         auto id1 = indices[i];
