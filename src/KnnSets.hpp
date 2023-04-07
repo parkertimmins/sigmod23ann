@@ -23,117 +23,6 @@ using std::tuple;
 
 
 
-#ifdef USE_AVX512
-struct alignas(64) KnnSetScannableSimd {
-public:
-    alignas(sizeof(__m512)) float dists[104] = { 0 };
-    alignas(sizeof(__m512)) uint32_t current_ids[100] = {};
-    uint32_t size = 0;
-    float lower_bound = 0; // 0 -> max val in first 100 -> decreases
-    uint32_t lowerBoundIdx = -1;
-    bool contains(uint32_t node) {
-        for (uint32_t i = 0; i < size; ++i) {
-            if (current_ids[i] == node) { return true; }
-        }
-        return false;
-    }
-
-    bool containsFull(uint32_t node) {
-        __m512i pattern = _mm512_set1_epi32(node);
-        auto* ids = current_ids;
-        for (uint32_t i = 0; i < 96; i+=16) {
-            auto block = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(ids));
-            auto match = _mm512_cmpeq_epi32_mask(pattern, block);
-            if (match) { return true; }
-            ids += 16;
-        }
-        for (uint32_t i = 96; i < size; ++i) {
-            if (current_ids[i] == node) { return true; }
-        }
-        return false;
-    }
-
-    uint32_t append(const uint32_t candidate_id, float dist) {
-        auto idx = size;
-        current_ids[idx] = candidate_id;
-        dists[idx] = dist;
-        size++;
-        return idx;
-    }
-
-    uint32_t getMaxIdx() {
-        auto* distances = dists;
-        __m512 maxes = _mm512_loadu_ps(distances);
-        __m512i maxIndices = _mm512_set_epi32(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
-        __m512i currIndices = _mm512_set_epi32(31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16);
-        __m512i inc = _mm512_set1_epi32(16);
-        distances+=16;
-        for (uint32_t i = 16; i < 96; i+=16) {
-            __m512 block = _mm512_loadu_ps(distances);
-            __mmask16 gt = _mm512_cmp_ps_mask(block, maxes, _CMP_GT_OS);
-            maxIndices = _mm512_mask_blend_epi32(gt, maxIndices, currIndices);
-            maxes = _mm512_mask_blend_ps(gt, maxes, block);
-            currIndices = _mm512_add_epi32(currIndices, inc);
-            distances += 16;
-        }
-
-        alignas(sizeof(__m512)) float maxArr[16] = {};
-        uint32_t maxIdxArr[16] = {};
-        _mm512_store_ps(maxArr, maxes);
-        _mm512_storeu_si512(maxIdxArr, maxIndices);
-        float max = std::numeric_limits<float>::min();
-        uint32_t maxIdx = -1;
-        for (uint32_t i = 0; i < 16; ++i) {
-            if (maxArr[i] > max) {
-                max = maxArr[i];
-                maxIdx = maxIdxArr[i];
-            }
-        }
-        for (uint32_t i = 96; i < 100; ++i) {
-            if (dists[i] > max) {
-                max = dists[i];
-                maxIdx = i;
-            }
-        }
-        return maxIdx;
-    }
-
-    // This may misorder nodes of equal sizes
-    void addCandidate(const uint32_t candidate_id, float dist) {
-        if (size < k) {
-            if (!contains(candidate_id)) {
-                auto idx = append(candidate_id, dist);
-                if (dist > lower_bound) {
-                    lower_bound = dist;
-                    lowerBoundIdx = idx;
-                }
-            }
-        } else if (dist < lower_bound) {
-            if (!containsFull(candidate_id)) {
-                dists[lowerBoundIdx] = dist;
-                current_ids[lowerBoundIdx] = candidate_id;
-                lowerBoundIdx = getMaxIdx();
-                lower_bound = dists[lowerBoundIdx];
-            }
-        }
-    }
-
-    vector<uint32_t> finalize() {
-        vector<pair<float, uint32_t>> queue;
-        queue.reserve(size);
-        for (uint32_t i = 0; i < size; ++i) {
-            queue.emplace_back(dists[i], current_ids[i]);
-        }
-
-        std::sort(queue.begin(), queue.begin() + size);
-        vector<uint32_t> knn;
-        for (uint32_t i = 0; i < size; ++i) {
-            knn.push_back(queue[i].second);
-        }
-        return knn;
-    }
-};
-#else
 struct alignas(64) KnnSetScannableSimd {
 public:
     alignas(sizeof(__m256)) float dists[104] = { 0 };
@@ -237,7 +126,8 @@ public:
         return knn;
     }
 };
-#endif
+
+
 
 
 
@@ -391,28 +281,16 @@ void addCandidates(float points[][112],
 }
 
 template<class TKnnSet>
-void addCandidatesGroupPoints(
-                   vector<pair<float[108], uint32_t>>& groupPoints,
-                   vector<TKnnSet>& idToKnn) {
-    for (uint32_t i=0; i < groupPoints.size() - 1; ++i) {
-        auto& [pt1, id1] = groupPoints[i];
-        auto& knn1 = idToKnn[id1];
-        for (uint32_t j=i+1; j < groupPoints.size(); ++j) {
-            auto& [pt2, id2] = groupPoints[j];
-            float dist = distance(pt1, pt2);
-            knn1.addCandidate(id2, dist);
-            idToKnn[id2].addCandidate(id1, dist);
-        }
-    }
-}
-
-template<class TKnnSet>
 void addCandidatesCopy(
+                   float points[][112],
                    float pointsCopy[][112],
                    vector<uint32_t>& indices,
                    Range range,
                    vector<TKnnSet>& idToKnn) {
 
+    for (uint32_t i=range.first; i < range.second-1; ++i) {
+        std::memcpy(pointsCopy[i], points[indices[i]], 100 * sizeof(float));
+    }
     for (uint32_t i=range.first; i < range.second-1; ++i) {
         auto id1 = indices[i];
         auto& knn1 = idToKnn[id1];

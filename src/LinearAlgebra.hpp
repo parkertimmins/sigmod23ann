@@ -46,40 +46,16 @@ float dotPartial(vector<uint32_t>& dimensions, const float* lhs, const float* rh
 
 
 
-#ifdef USE_AVX512
-float distance(const float* lhs, const float* rhs) {
-    __m512 sum  = _mm512_set1_ps(0);
-    auto* r = rhs;
-    auto* l = lhs;
-    for (uint32_t i = 0; i < 96; i+=16) {
-        __m512 rs = _mm512_loadu_ps(r);
-        __m512 ls = _mm512_loadu_ps(l);
-        __m512 diff = _mm512_sub_ps(ls, rs);
-        sum = _mm512_fmadd_ps(diff, diff, sum);
-        r += 16;
-        l += 16;
-    }
 
-    alignas(sizeof(__m512)) float sums[16] = {};
-    _mm512_store_ps(sums, sum);
-    float ans = 0.0f;
-    for (float s: sums) {
-        ans += s;
-    }
-    for (unsigned i = 96; i < dims; ++i) {
-        auto d = (lhs[i] - rhs[i]);
-        ans += (d * d);
-    }
-    return ans;
-}
-#else
+
+
 float distance(const float* lhs, const float* rhs) {
     __m256 sum  = _mm256_set1_ps(0);
     auto* r = rhs;
     auto* l = lhs;
     for (uint32_t i = 0; i < 96; i+=8) {
-        __m256 rs = _mm256_loadu_ps(r);
-        __m256 ls = _mm256_loadu_ps(l);
+        __m256 rs = _mm256_load_ps(r);
+        __m256 ls = _mm256_load_ps(l);
         __m256 diff = _mm256_sub_ps(ls, rs);
         sum = _mm256_fmadd_ps(diff, diff, sum);
         r += 8;
@@ -98,7 +74,6 @@ float distance(const float* lhs, const float* rhs) {
     }
     return ans;
 }
-#endif
 
 double norm(const Vec& vec) {
     float sumSquares = 0.0;
@@ -149,6 +124,18 @@ void plusEq(float* lhs, float* rhs) {
     }
 }
 
+//void plusEq(Vec& lhs, const Vec& rhs) {
+//    auto* r = const_cast<float*>(rhs.data());
+//    auto* l = const_cast<float*>(lhs.data());
+//    for (uint32_t i = 0; i < 100; i+=4) {
+//        __m128 ls = _mm_load_ps(l);
+//        __m128 rs = _mm_load_ps(r);
+//        __m128 sum = _mm_add_ps(ls, rs);
+//        _mm_store_ps(l, sum);
+//        l += 4;
+//        r += 4;
+//    }
+//}
 
 Vec add(const Vec& lhs, const Vec& rhs) {
     auto dim = lhs.size();
@@ -185,38 +172,13 @@ Vec scalarMult(float c, const Vec& vec) {
     return res;
 }
 
-
-#ifdef USE_AVX512
-float dot(const float* lhs, const float* rhs) {
-    __m512 sum  = _mm512_set1_ps(0);
-    auto* r = rhs;
-    auto* l = lhs;
-    for (uint32_t i = 0; i < 96; i+=16) {
-        __m512 rs = _mm512_loadu_ps(r);
-        __m512 ls = _mm512_loadu_ps(l);
-        sum = _mm512_fmadd_ps(rs, ls, sum);
-        l += 16;
-        r += 16;
-    }
-    alignas(sizeof(__m512)) float sums[16] = {};
-    _mm512_store_ps(sums, sum);
-    float ans = 0.0f;
-    for (float s: sums) {
-        ans += s;
-    }
-    for (unsigned i = 96; i < dims; ++i) {
-        ans += (lhs[i] * rhs[i]);
-    }
-    return ans;
-}
-#else
 float dot(const float* lhs, const float* rhs) {
     __m256 sum  = _mm256_set1_ps(0);
     auto* r = rhs;
     auto* l = lhs;
     for (uint32_t i = 0; i < 96; i+=8) {
-        __m256 rs = _mm256_loadu_ps(r);
-        __m256 ls = _mm256_loadu_ps(l);
+        __m256 rs = _mm256_load_ps(r);
+        __m256 ls = _mm256_load_ps(l);
         sum = _mm256_fmadd_ps(rs, ls, sum);
         l += 8;
         r += 8;
@@ -232,7 +194,7 @@ float dot(const float* lhs, const float* rhs) {
     }
     return ans;
 }
-#endif
+
 
 // project v onto u
 Vec project(const Vec& u, const Vec& v) {
