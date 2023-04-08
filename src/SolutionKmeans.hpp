@@ -321,7 +321,8 @@ struct SolutionKmeans {
                                      float pointsCopy[][112],
                                      vector<uint32_t>& indices,
                                      vector<uint32_t>& indices2,
-                                     tbb::concurrent_vector<Range>& ranges
+                                     tbb::concurrent_vector<Range>& ranges,
+                                     bool shouldSplit
 
     ) {
         uint32_t rangeSize = range.second - range.first;
@@ -380,13 +381,13 @@ struct SolutionKmeans {
                 goto begin_kmeans_small;
             }
 
-            if (2 * rangeSize > 3'000) {
+            if (shouldSplit) {
                 std::memcpy(indices2.data() + range.first, indices.data() + range.first, rangeSize * sizeof(uint32_t));
-                splitKmeansBinary(lo, knnIterations, maxGroupSize, points, pointsCopy, indices2, indices, ranges);
-                splitKmeansBinary(hi, knnIterations, maxGroupSize, points, pointsCopy, indices2, indices, ranges);
+                splitKmeansBinary(lo, knnIterations, maxGroupSize, points, pointsCopy, indices2, indices, ranges, false);
+                splitKmeansBinary(hi, knnIterations, maxGroupSize, points, pointsCopy, indices2, indices, ranges, false);
             }
-            splitKmeansBinary(lo, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges);
-            splitKmeansBinary(hi, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges);
+            splitKmeansBinary(lo, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, false);
+            splitKmeansBinary(hi, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, false);
         } else {
             begin_kmeans:
 
@@ -485,8 +486,8 @@ struct SolutionKmeans {
             std::memcpy(it2, group2.data(), group2.size() * sizeof(uint32_t));
 
             tbb::parallel_invoke(
-                [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges); },
-                [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices, indices2, ranges); }
+                [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, shouldSplit); }
+                [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices, indices2, ranges, shouldsplit); }
             );
         }
     }
@@ -895,7 +896,7 @@ struct SolutionKmeans {
             std::iota(indices.begin(), indices.end(), 0);
 
             auto startGroup = hclock::now();
-            splitKmeansBinary({0, numPoints}, 1, 400, points, pointsCopy, indices, indices2, ranges);
+            splitKmeansBinary({0, numPoints}, 1, 400, points, pointsCopy, indices, indices2, ranges, true);
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
 
             std::cout << "num ranges: " << ranges.size() << "\n";
