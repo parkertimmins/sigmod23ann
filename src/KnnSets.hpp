@@ -319,16 +319,22 @@ vector<uint32_t> padResult(uint32_t numPoints, vector<vector<uint32_t>>& result)
 }
 
 
+template<class TKnnSet>
 void addCandidatesGroup(float points[][112],
                         vector<uint32_t>& group,
-                        vector<KnnSetScannable>& idToKnn) {
+                        vector<TKnnSet>& idToKnn) {
+
     uint32_t groupSize = group.size();
+    vector<float[112]> pointsCopy(groupSize);
+    for (uint32_t i=0; i < groupSize; ++i) {
+        std::memcpy(pointsCopy[i], points[group[i]], 100 * sizeof(float));
+    }
     for (uint32_t i = 0; i < groupSize-1; ++i) {
         auto id1 = group[i];
         auto& knn1 = idToKnn[id1];
         for (uint32_t j=i+1; j < groupSize; ++j) {
             auto id2 = group[j];
-            float dist = distance(points[id1], points[id2]);
+            float dist = distance(pointsCopy[i], pointsCopy[j]);
             knn1.addCandidate(id2, dist);
             idToKnn[id2].addCandidate(id1, dist);
         }

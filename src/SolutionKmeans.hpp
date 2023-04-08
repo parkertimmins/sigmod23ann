@@ -28,7 +28,7 @@
 #include "LinearAlgebra.hpp"
 #include "Utility.hpp"
 #include <ranges>
-#include "tsl/robin_set.h"
+#include "tsl/robin_map.h"
 
 
 using std::cout;
@@ -637,6 +637,193 @@ struct SolutionKmeans {
         return nodesUpdated.load();
     }
 
+
+    static std::unordered_map<uint32_t, pair<uint32_t, vector<uint32_t>>> getPerGroupsSample(uint32_t numPoints,
+                                                                                         float points[][112],
+                                                                                         vector<uint32_t>& id_to_group) {
+        static uint32_t resSize = 2;
+        std::unordered_map<uint32_t, pair<uint32_t, vector<uint32_t>>> reservoirs;
+        for (uint32_t i = 0; i < numPoints; ++i) {
+            auto &pt = points[i];
+            uint32_t grp = id_to_group[i];
+            if (reservoirs.find(grp) == reservoirs.end()) {
+                reservoirs[grp] = {0, vector<uint32_t>()};
+            }
+            auto &[numSeen, reservoir] = reservoirs[grp];
+            if (reservoir.size() < resSize) {
+                reservoir.push_back(i);
+            } else {
+                std::uniform_int_distribution<uint32_t> distribution(0, numSeen);
+                uint32_t j = distribution(rd);
+                if (j < resSize) {
+                    reservoir[j] = i;
+                }
+            }
+            numSeen++;
+        }
+        return reservoirs;
+    }
+
+    static uint32_t requiredHashFuncs(uint32_t numPoints, uint32_t maxBucketSize) {
+        uint32_t groupSize = numPoints;
+        uint32_t numHashFuncs = 0;
+        while (groupSize > maxBucketSize) {
+            groupSize /= 2;
+            numHashFuncs++;
+        }
+        return numHashFuncs;
+    }
+
+    // handle both point vector data and array data
+    static void splitKmeansNonRec(
+            uint32_t numPoints,
+            uint32_t knnIterations,
+            uint32_t maxGroupSize,
+            float points[][112],
+            vector<KnnSetScannableSimd>& idToKnn) {
+
+        vector<uint32_t> id_to_group(numPoints, 1);
+        vector<vector<uint32_t>> groups;
+
+        uint32_t depth = requiredHashFuncs(numPoints, maxGroupSize);
+        uint32_t d = 0;
+        while (d++ < depth) {
+            auto perGroupSamples = getPerGroupsSample(numPoints, points, id_to_group);
+
+            // build centers;
+            std::unordered_map<uint32_t, pair<Vec, Vec>> groupCenters;
+            std::unordered_map<uint32_t, pair<float, Vec>> groupPlane;
+            for (auto& [grp, countSample] : perGroupSamples) {
+                auto& [count, sample] = countSample;
+                Vec c1(100);
+                Vec c2(100);
+                for (uint32_t j = 0; j < 100; ++j) { c1[j] = points[sample[0]][j]; }
+                for (uint32_t j = 0; j < 100; ++j) { c2[j] = points[sample[1]][j]; }
+                groupCenters[grp] = { c1, c2 };
+
+                auto between = scalarMult(0.5, add(c1, c2));
+                auto coefs = sub(c1, between);
+                auto offset = dot(between.data(), coefs.data());
+                groupPlane[grp] = { offset, coefs };
+            };
+
+            for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
+                using centroid_agg = pair<uint32_t, vector<double>>;
+                using group_center_agg = std::unordered_map<uint32_t, pair<centroid_agg, centroid_agg>>;
+                tbb::combinable<group_center_agg> agg;
+                tbb::parallel_for(
+                    tbb::blocked_range<size_t>(0, numPoints),
+                    [&](oneapi::tbb::blocked_range<size_t> r) {
+                        auto& center_agg = agg.local();
+                        for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                            auto grp = id_to_group[i];
+                            auto& [offset, coefs] = groupPlane[grp];
+
+                            if (center_agg.find(grp) == center_agg.end()) {
+                                center_agg[grp] = { { 0, vector<double>(100, 0.0f) }, { 0, vector<double>(100, 0.0f) } };
+                            }
+
+                            auto& pt = points[i];
+                            auto& [agg1, agg2] = center_agg[grp];
+                            auto& aggToUse = dot(coefs.data(), points[i]) >= offset ? agg1 : agg2;
+                            aggToUse.first++;
+                            for (uint32_t j = 0; j < dims; ++j) { aggToUse.second[j] += pt[j]; }
+                        }
+                    }
+                );
+                auto per_group_center_aggs = agg.combine([](const group_center_agg& x, const group_center_agg& y) {
+                    group_center_agg res;
+                    for (auto& [grp, ca] : x) { res[grp] = ca; }
+                    for (auto& [grp, ca] : y) {
+                        if (res.find(grp) == res.end()) {
+                            res[grp] = ca;
+                        } else {
+                            auto& [c1, c2] = res[grp];
+                            c1.first += ca.first.first;
+                            c2.first += ca.second.first;
+                            for (uint32_t j = 0; j < dims; ++j) {
+                                c1.second[j] += ca.first.second[j];
+                                c2.second[j] += ca.second.second[j];
+                            }
+                        }
+                    }
+                    return res;
+                });
+
+                for (auto& [grp, center_aggs] : per_group_center_aggs)  {
+                    auto& [center1, center2] = groupCenters[grp];
+                    auto& [c1_agg, c2_agg] = center_aggs;
+                    for (uint32_t i = 0; i < dims; ++i) {
+                        center1[i] = c1_agg.second[i] / c1_agg.first;
+                        center2[i] = c2_agg.second[i] / c2_agg.first;
+                    }
+                    auto between = scalarMult(0.5, add(center1, center2));
+                    auto coefs = sub(center1, between);
+                    auto offset = dot(between.data(), coefs.data());
+                    groupPlane[grp] = { offset, coefs };
+                };
+            }
+
+            using subgroups = pair<vector<uint32_t>, vector<uint32_t>>;
+            using group_subgroups = std::unordered_map<uint32_t, subgroups>;
+            tbb::combinable<group_subgroups> grp_subgroups;
+            tbb::parallel_for(
+                tbb::blocked_range<uint32_t>(0, numPoints),
+                [&](tbb::blocked_range<uint32_t> r) {
+                    auto& local_subgroups = grp_subgroups.local();
+                    for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                        uint32_t grp = id_to_group[i];
+
+                        if (local_subgroups.find(grp) == local_subgroups.end()) {
+                            local_subgroups[grp] = { vector<uint32_t>(), vector<uint32_t>() };
+                        }
+
+                        auto& [g1, g2] = local_subgroups[grp];
+                        auto& [offset, coefs] = groupPlane[grp];
+                        auto& pt = points[i];
+                        if (dot(coefs.data(), pt) >= offset) {
+                            g1.push_back(i);
+                            id_to_group[i] = 2 * grp;
+                        } else {
+                            g2.push_back(i);
+                            id_to_group[i] = 2 * grp + 1;
+                        }
+                    }
+                }
+            );
+
+//            auto per_group_subgrps = grp_subgroups.combine([](const group_subgroups& x, const group_subgroups& y) {
+//                group_subgroups res;
+//                for (auto& [grp, sgs] : x) { res[grp] = sgs; }
+//                for (auto& [grp, sgs] : y) {
+//                    if (res.find(grp) == res.end()) {
+//                        res[grp] = sgs;
+//                    } else {
+//                        auto& [g1, g2] = res[grp];
+//                        g1.insert(g1.end(), sgs.first.begin(), sgs.first.end());
+//                        g2.insert(g2.end(), sgs.second.begin(), sgs.second.end());
+//                    }
+//                }
+//                return res;
+//            });
+//
+//            for (auto& [grp, sgs] : per_group_subgrps) {
+//                groups.push_back(sgs.first);
+//                groups.push_back(sgs.second);
+//            }
+        }
+
+        tbb::parallel_for(
+            tbb::blocked_range<uint32_t>(0, groups.size()),
+            [&](tbb::blocked_range<uint32_t> r) {
+                for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                    addCandidatesGroup(points, groups[i], idToKnn);
+                }
+            }
+        );
+    }
+
+
     static void constructResult(float points[][112], uint32_t numPoints, vector<vector<uint32_t>>& result) {
 
         bool localRun = getenv("LOCAL_RUN");
@@ -644,24 +831,19 @@ struct SolutionKmeans {
         long timeBoundsMs = (localRun || numPoints == 10'000)  ? 20'000 : 1'150'000;
 
 
-        float (*pointsCopy)[112] = static_cast<float(*)[112]>(aligned_alloc(64, numPoints * 112 * sizeof(float)));
 
         std::cout << "start run with time bound: " << timeBoundsMs << '\n';
 
         auto startTime = hclock::now();
         vector<KnnSetScannableSimd> idToKnn(numPoints);
 
-        // rewrite point data in adjacent memory and sort in a group order
-        std::vector<uint32_t> indices(numPoints);
-
         uint32_t iteration = 0;
 //        while (iteration < 5) {
         while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
             std::cout << "Iteration: " << iteration << '\n';
 
-            std::iota(indices.begin(), indices.end(), 0);
             auto startGroupProcess = hclock::now();
-            splitKmeansBinaryProcess({0, numPoints}, 1, 400, points, pointsCopy, indices, idToKnn);
+            splitKmeansNonRec(numPoints, 1, 400, points, idToKnn);
 
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroupProcess).count();
             std::cout << " group/process time: " << groupDuration << '\n';
