@@ -642,9 +642,8 @@ struct SolutionKmeans {
                                                                                          float points[][112],
                                                                                          vector<uint32_t>& id_to_group) {
         static uint32_t resSize = 2;
-        std::unordered_map<uint32_t, pair<uint32_t, vector<uint32_t>>> reservoirs;
+        tsl::robin_map<uint32_t, pair<uint32_t, vector<uint32_t>>> reservoirs;
         for (uint32_t i = 0; i < numPoints; ++i) {
-            auto &pt = points[i];
             uint32_t grp = id_to_group[i];
             if (reservoirs.find(grp) == reservoirs.end()) {
                 reservoirs[grp] = {0, vector<uint32_t>()};
