@@ -638,8 +638,7 @@ struct SolutionKmeans {
     }
 
 
-    static std::unordered_map<uint32_t, pair<uint32_t, vector<uint32_t>>> getPerGroupsSample(uint32_t numPoints,
-                                                                                         float points[][112],
+    static tsl::robin_map<uint32_t, pair<uint32_t, vector<uint32_t>>> getPerGroupsSample(uint32_t numPoints,
                                                                                          vector<uint32_t>& id_to_group) {
         static uint32_t resSize = 2;
         tsl::robin_map<uint32_t, pair<uint32_t, vector<uint32_t>>> reservoirs;
@@ -685,7 +684,7 @@ struct SolutionKmeans {
         uint32_t depth = requiredHashFuncs(numPoints, maxGroupSize);
         uint32_t d = 0;
         while (d++ < depth) {
-            auto perGroupSamples = getPerGroupsSample(numPoints, points, id_to_group);
+            auto perGroupSamples = getPerGroupsSample(numPoints, id_to_group);
 
             // build centers;
             tsl::robin_map<uint32_t, pair<Vec, Vec>> groupCenters;
@@ -838,8 +837,8 @@ struct SolutionKmeans {
         vector<KnnSetScannableSimd> idToKnn(numPoints);
 
         uint32_t iteration = 0;
-        while (iteration < 3) {
-//        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
+//        while (iteration < 3) {
+        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
             std::cout << "Iteration: " << iteration << '\n';
 
             auto startGroupProcess = hclock::now();
