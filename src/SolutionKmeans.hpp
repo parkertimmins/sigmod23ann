@@ -313,6 +313,179 @@ struct SolutionKmeans {
     }
 
 
+    // handle both point vector data and array data
+    static void splitKmeansBinary(Range range,
+                                     uint32_t knnIterations,
+                                     uint32_t maxGroupSize,
+                                     float points[][112],
+                                     float pointsCopy[][112],
+                                     vector<uint32_t>& indices,
+                                     tbb::concurrent_vector<Range>& ranges
+
+    ) {
+        uint32_t rangeSize = range.second - range.first;
+        if (rangeSize < maxGroupSize) {
+            ranges.push_back(range);
+        } else if (rangeSize < 3'000) { // last two splits single threaded in hope of maintain cache locality
+            begin_kmeans_small:
+
+            float percSample = calcSamplePercent(range.first, range.second);
+            auto sampleRange = getSampleFromPercent(percSample, range.first, range.second);
+            auto [center1, center2] = kmeansStartVecs(sampleRange, range, points, indices);
+
+            for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
+                auto between = scalarMult(0.5, add(center1, center2));
+                auto coefs = sub(center1, between);
+                auto offset = dot(between.data(), coefs.data());
+
+                using centroid_agg = pair<uint32_t, vector<float>>;
+                centroid_agg c1 = make_pair(0, vector<float>(100, 0.0));
+                centroid_agg c2 = make_pair(0, vector<float>(100, 0.0));
+
+                for (uint32_t i = range.first; i < range.second; ++i) {
+                    auto& pt = points[indices[i]];
+                    centroid_agg& ca = dot(coefs.data(), pt) >= offset ? c1 : c2;
+                    ca.first++;
+                    for (uint32_t j = 0; j < dims; ++j) { ca.second[j] += pt[j]; }
+                }
+
+                if (c1.first == 0 || c2.first == 0) {
+                    goto begin_kmeans_small;
+                }
+
+                // recompute centers based on averages
+                for (uint32_t i = 0; i < dims; ++i) {
+                    center1[i] = c1.second[i] / c1.first;
+                    center2[i] = c2.second[i] / c2.first;
+                }
+            }
+
+            // compute final groups
+            auto between = scalarMult(0.5, add(center1, center2));
+            auto coefs = sub(center1, between);
+            auto offset = dot(between.data(), coefs.data());
+
+            auto indicesBegin = indices.begin() + range.first;
+            auto indicesEnd = indices.begin() + range.second;
+            auto middleIt = std::stable_partition(indicesBegin, indicesEnd, [&](uint32_t id) {
+                return dot(coefs.data(), points[id]) >= offset;
+            });
+            auto range1Size = middleIt - indicesBegin;
+            auto range2Size = indicesEnd - middleIt;
+            Range lo = {range.first, range.first + range1Size};
+            Range hi = {range.first + range1Size , range.second};
+
+            if (range1Size == 0 || range2Size == 0) {
+                goto begin_kmeans_small;
+            }
+
+            splitKmeansBinary(lo, knnIterations, maxGroupSize, points, pointsCopy, indices, ranges);
+            splitKmeansBinary(hi, knnIterations, maxGroupSize, points, pointsCopy, indices, ranges);
+        } else {
+            begin_kmeans:
+
+            float percSample = calcSamplePercent(range.first, range.second);
+            auto sampleRange = getSampleFromPercent(percSample, range.first, range.second);
+
+//            std::cout << "rangeSize: " << rangeSize << ", sampleSize: " << sampleRange.size() << "\n";
+            auto [center1, center2] = kmeansStartVecs(sampleRange, range, points, indices);
+
+            for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
+                auto between = scalarMult(0.5, add(center1, center2));
+                auto coefs = sub(center1, between);
+                auto offset = dot(between.data(), coefs.data());
+                // dot(x, coefs) >= offset means nearer to center1
+
+
+                using centroid_agg = pair<uint32_t, vector<float>>;
+                tbb::combinable<pair<centroid_agg, centroid_agg>> agg(make_pair(make_pair(0, vector<float>(100, 0.0f)), make_pair(0, vector<float>(100, 0.0f))));
+                tbb::parallel_for(
+                    tbb::blocked_range<size_t>(0, sampleRange.size()),
+                    [&](oneapi::tbb::blocked_range<size_t> r) {
+                        auto& [agg1, agg2] = agg.local();
+                        for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                            auto& pt = points[indices[sampleRange[i]]];
+                            auto& aggToUse = dot(coefs.data(), pt) >= offset ? agg1 : agg2;
+                            aggToUse.first++;
+                            for (uint32_t j = 0; j < dims; ++j) { aggToUse.second[j] += pt[j]; }
+                        }
+                    }
+                );
+                auto [c1_agg, c2_agg] = agg.combine([](const pair<centroid_agg, centroid_agg>& x, const pair<centroid_agg, centroid_agg>& y) {
+                    centroid_agg c1{0, vector<float>(100, 0.0f)};
+                    centroid_agg c2{0, vector<float>(100, 0.0f)};
+                    c1.first = x.first.first + y.first.first;
+                    c2.first = x.second.first + y.second.first;
+                    for (uint32_t j = 0; j < dims; ++j) {
+                        c1.second[j] = x.first.second[j] + y.first.second[j];
+                        c2.second[j] = x.second.second[j] + y.second.second[j];
+                    }
+                    return make_pair(c1, c2);
+                });
+
+                if (c1_agg.first == 0 || c2_agg.first == 0) {
+                    goto begin_kmeans;
+                }
+
+                // recompute centers based on averages
+                for (uint32_t i = 0; i < dims; ++i) {
+                    center1[i] = c1_agg.second[i] / c1_agg.first;
+                    center2[i] = c2_agg.second[i] / c2_agg.first;
+                }
+            }
+
+            // compute final groups
+            auto between = scalarMult(0.5, add(center1, center2));
+            auto coefs = sub(center1, between);
+            auto offset = dot(between.data(), coefs.data());
+
+            using groups = pair<vector<uint32_t>, vector<uint32_t>>;
+            tbb::combinable<groups> groupsAgg(make_pair<>(vector<uint32_t>(), vector<uint32_t>()));
+            tbb::parallel_for(
+                tbb::blocked_range<uint32_t>(range.first, range.second),
+                [&](tbb::blocked_range<uint32_t> r) {
+                    auto& [g1, g2] = groupsAgg.local();
+                    for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                        auto id = indices[i];
+                        auto& pt = points[id];
+                        auto& group = dot(coefs.data(), pt) >= offset ? g1 : g2;
+                        group.push_back(id);
+                    }
+                }
+            );
+            auto [group1, group2] = groupsAgg.combine([](const groups& x, const groups& y) {
+                vector<uint32_t> g1;
+                vector<uint32_t> g2;
+                g1.insert(g1.end(), x.first.begin(), x.first.end());
+                g1.insert(g1.end(), y.first.begin(), y.first.end());
+                g2.insert(g2.end(), x.second.begin(), x.second.end());
+                g2.insert(g2.end(), y.second.begin(), y.second.end());
+                return make_pair(g1, g2);
+            });
+
+            if (group1.empty() || group2.empty()) {
+                goto begin_kmeans;
+            }
+
+            // build ranges
+            uint32_t subRange1Start = range.first;
+            uint32_t subRange2Start = range.first + group1.size();
+            Range subRange1 = {subRange1Start, subRange1Start + group1.size()};
+            Range subRange2 = {subRange2Start, subRange2Start + group2.size()};
+
+            auto it1 = indices.data() + subRange1Start;
+            std::memcpy(it1, group1.data(), group1.size() * sizeof(uint32_t));
+            auto it2 = indices.data() + subRange2Start;
+            std::memcpy(it2, group2.data(), group2.size() * sizeof(uint32_t));
+
+            tbb::parallel_invoke(
+                [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, ranges); },
+                [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices, ranges); }
+            );
+        }
+    }
+
+
     static uint64_t topUpSingle(float points[][112], vector<KnnSetScannableSimd>& idToKnn) {
         auto startTopup = hclock::now();
         uint32_t numPoints = idToKnn.size();
@@ -706,24 +879,40 @@ struct SolutionKmeans {
         // rewrite point data in adjacent memory and sort in a group order
         std::vector<uint32_t> indices(numPoints);
 
+        tbb::concurrent_vector<Range> ranges;
         uint32_t iteration = 0;
 //        while (iteration < 10) {
         while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
             std::cout << "Iteration: " << iteration << '\n';
 
             std::iota(indices.begin(), indices.end(), 0);
-            auto startGroupProcess = hclock::now();
-            splitKmeansBinaryProcess({0, numPoints}, 1, 400, points, pointsCopy, indices, idToKnn);
 
-            auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroupProcess).count();
-            std::cout << " group/process time: " << groupDuration << '\n';
-            groupProcessTime += groupDuration;
-            uint64_t avgProcessTime = processTime / numThreads;
-            std::cout << " avg group time: " << groupDuration - avgProcessTime << '\n';
-            std::cout << " avg process time: " << avgProcessTime << '\n';
+            auto startGroup = hclock::now();
+            splitKmeansBinary({0, numPoints}, 1, 400, points, pointsCopy, indices, ranges);
+            auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
+
+            auto startProcess = hclock::now();
+            Task<Range, tbb::concurrent_vector<Range>> tasks(ranges);
+            vector<std::thread> threads;
+            for (uint32_t t = 0; t < numThreads; ++t) {
+                threads.emplace_back([&, t]() {
+                    auto task = tasks.getTask();
+                    while (task) {
+                        auto range = *task;
+                        addCandidatesCopy(points, pointsCopy, indices, range, idToKnn);
+                        task = tasks.getTask();
+                    }
+                });
+            }
+            for (auto& thread: threads) { thread.join(); }
+            auto processDuration = duration_cast<milliseconds>(hclock::now() - startProcess).count();
+
+            std::cout << " group time: " << groupDuration << '\n';
+            std::cout << " process time: " << processDuration << '\n';
             processTime = 0;
 
             iteration++;
+            ranges.clear();
         }
 
 //        topUpSingle(points, idToKnn);
