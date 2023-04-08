@@ -164,8 +164,8 @@ float dot(const float* lhs, const float* rhs) {
     auto* r = rhs;
     auto* l = lhs;
     for (uint32_t i = 0; i < 96; i+=8) {
-        __m256 rs = _mm256_loadu_ps(r);
-        __m256 ls = _mm256_loadu_ps(l);
+        __m256 rs = _mm256_load_ps(r);
+        __m256 ls = _mm256_load_ps(l);
         sum = _mm256_fmadd_ps(rs, ls, sum);
         l += 8;
         r += 8;
