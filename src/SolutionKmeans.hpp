@@ -731,7 +731,7 @@ struct SolutionKmeans {
                 );
                 auto per_group_center_aggs = agg.combine([](const group_center_agg& x, const group_center_agg& y) {
                     group_center_agg res;
-                    for (auto& [grp, ca] : x) { res[grp] = ca; }
+                    res.insert(x.begin(), x.end());
                     for (auto& [grp, ca] : y) {
                         if (res.find(grp) == res.end()) {
                             res[grp] = ca;
@@ -762,19 +762,11 @@ struct SolutionKmeans {
                 };
             }
 
-            using subgroups = pair<vector<uint32_t>, vector<uint32_t>>;
-            using group_subgroups = tsl::robin_map<uint32_t, subgroups>;
-            tbb::combinable<group_subgroups> grp_subgroups;
             tbb::parallel_for(
                 tbb::blocked_range<uint32_t>(0, numPoints),
                 [&](tbb::blocked_range<uint32_t> r) {
-                    auto& local_subgroups = grp_subgroups.local();
                     for (uint32_t i = r.begin(); i < r.end(); ++i) {
                         uint32_t grp = id_to_group[i];
-                        if (local_subgroups.find(grp) == local_subgroups.end()) {
-                            local_subgroups[grp] = { vector<uint32_t>(), vector<uint32_t>() };
-                        }
-                        auto& [g1, g2] = local_subgroups[grp];
                         auto& [offset, coefs] = groupPlane[grp];
                         id_to_group[i] = dot(coefs.data(), points[i]) >= offset ? 2 * grp : 2 * grp + 1;
                     }
@@ -847,7 +839,7 @@ struct SolutionKmeans {
         vector<KnnSetScannableSimd> idToKnn(numPoints);
 
         uint32_t iteration = 0;
-        while (iteration < 5) {
+        while (iteration < 3) {
 //        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
             std::cout << "Iteration: " << iteration << '\n';
 
