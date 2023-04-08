@@ -683,16 +683,14 @@ struct SolutionKmeans {
             vector<KnnSetScannableSimd>& idToKnn) {
 
         vector<uint32_t> id_to_group(numPoints, 1);
-        vector<vector<uint32_t>> groups;
-
         uint32_t depth = requiredHashFuncs(numPoints, maxGroupSize);
         uint32_t d = 0;
         while (d++ < depth) {
             auto perGroupSamples = getPerGroupsSample(numPoints, points, id_to_group);
 
             // build centers;
-            std::unordered_map<uint32_t, pair<Vec, Vec>> groupCenters;
-            std::unordered_map<uint32_t, pair<float, Vec>> groupPlane;
+            tsl::robin_map<uint32_t, pair<Vec, Vec>> groupCenters;
+            tsl::robin_map<uint32_t, pair<float, Vec>> groupPlane;
             for (auto& [grp, countSample] : perGroupSamples) {
                 auto& [count, sample] = countSample;
                 Vec c1(100);
@@ -709,7 +707,7 @@ struct SolutionKmeans {
 
             for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
                 using centroid_agg = pair<uint32_t, vector<double>>;
-                using group_center_agg = std::unordered_map<uint32_t, pair<centroid_agg, centroid_agg>>;
+                using group_center_agg = tsl::robin_map<uint32_t, pair<centroid_agg, centroid_agg>>;
                 tbb::combinable<group_center_agg> agg;
                 tbb::parallel_for(
                     tbb::blocked_range<size_t>(0, numPoints),
@@ -765,7 +763,7 @@ struct SolutionKmeans {
             }
 
             using subgroups = pair<vector<uint32_t>, vector<uint32_t>>;
-            using group_subgroups = std::unordered_map<uint32_t, subgroups>;
+            using group_subgroups = tsl::robin_map<uint32_t, subgroups>;
             tbb::combinable<group_subgroups> grp_subgroups;
             tbb::parallel_for(
                 tbb::blocked_range<uint32_t>(0, numPoints),
@@ -773,45 +771,57 @@ struct SolutionKmeans {
                     auto& local_subgroups = grp_subgroups.local();
                     for (uint32_t i = r.begin(); i < r.end(); ++i) {
                         uint32_t grp = id_to_group[i];
-
                         if (local_subgroups.find(grp) == local_subgroups.end()) {
                             local_subgroups[grp] = { vector<uint32_t>(), vector<uint32_t>() };
                         }
-
                         auto& [g1, g2] = local_subgroups[grp];
                         auto& [offset, coefs] = groupPlane[grp];
-                        auto& pt = points[i];
-                        if (dot(coefs.data(), pt) >= offset) {
-                            g1.push_back(i);
-                            id_to_group[i] = 2 * grp;
-                        } else {
-                            g2.push_back(i);
-                            id_to_group[i] = 2 * grp + 1;
-                        }
+                        id_to_group[i] = dot(coefs.data(), points[i]) >= offset ? 2 * grp : 2 * grp + 1;
                     }
                 }
             );
-
-//            auto per_group_subgrps = grp_subgroups.combine([](const group_subgroups& x, const group_subgroups& y) {
-//                group_subgroups res;
-//                for (auto& [grp, sgs] : x) { res[grp] = sgs; }
-//                for (auto& [grp, sgs] : y) {
-//                    if (res.find(grp) == res.end()) {
-//                        res[grp] = sgs;
-//                    } else {
-//                        auto& [g1, g2] = res[grp];
-//                        g1.insert(g1.end(), sgs.first.begin(), sgs.first.end());
-//                        g2.insert(g2.end(), sgs.second.begin(), sgs.second.end());
-//                    }
-//                }
-//                return res;
-//            });
-//
-//            for (auto& [grp, sgs] : per_group_subgrps) {
-//                groups.push_back(sgs.first);
-//                groups.push_back(sgs.second);
-//            }
         }
+
+        using grp_to_group = tsl::robin_map<uint32_t, vector<uint32_t>>;
+        tbb::combinable<grp_to_group> final_groups;
+        tbb::parallel_for(
+            tbb::blocked_range<uint32_t>(0, numPoints),
+            [&](tbb::blocked_range<uint32_t> r) {
+                auto& local_final_groups = final_groups.local();
+                for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                    uint32_t grp = id_to_group[i];
+                    if (local_final_groups.find(grp) == local_final_groups.end()) {
+                        local_final_groups[grp] = vector<uint32_t>();
+                    }
+                    local_final_groups[grp].push_back(i);
+                }
+            }
+        );
+        auto final = final_groups.combine([](const grp_to_group& x, const grp_to_group& y) {
+            grp_to_group res;
+            for (auto& [grp, group] : x) { res[grp] = group; }
+            for (auto& [grp, group_y] : y) {
+                if (res.find(grp) == res.end()) {
+                    res[grp] = group_y;
+                } else {
+                    auto& group_x = res[grp];
+                    group_x.insert(group_x.end(), group_y.begin(), group_y.end());
+                }
+            }
+            return res;
+        });
+
+        vector<vector<uint32_t>> groups;
+        groups.reserve(final.size());
+        for (auto& [id, group] : final) {
+            if (group.size() < 10'000) {
+                groups.push_back(group);
+            } else {
+                std::cout << "too large: " << group.size() << "\n";
+            }
+        }
+        std::cout << "num groups: " << groups.size() << "\n";
+        final.clear();
 
         tbb::parallel_for(
             tbb::blocked_range<uint32_t>(0, groups.size()),
@@ -822,7 +832,6 @@ struct SolutionKmeans {
             }
         );
     }
-
 
     static void constructResult(float points[][112], uint32_t numPoints, vector<vector<uint32_t>>& result) {
 
@@ -838,8 +847,8 @@ struct SolutionKmeans {
         vector<KnnSetScannableSimd> idToKnn(numPoints);
 
         uint32_t iteration = 0;
-//        while (iteration < 5) {
-        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
+        while (iteration < 5) {
+//        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
             std::cout << "Iteration: " << iteration << '\n';
 
             auto startGroupProcess = hclock::now();
@@ -856,7 +865,7 @@ struct SolutionKmeans {
             iteration++;
         }
 
-        topUpSingle(points, idToKnn);
+//        topUpSingle(points, idToKnn);
 
         for (uint32_t id = 0; id < numPoints; ++id) {
             result[id] = idToKnn[id].finalize();
