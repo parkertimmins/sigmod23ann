@@ -672,6 +672,16 @@ struct SolutionKmeans {
         return numHashFuncs;
     }
 
+    inline static long stage1 = 0;
+    inline static long stage2 = 0;
+    inline static long stage3 = 0;
+    inline static long stage4 = 0;
+    inline static long stage5 = 0;
+    inline static long stage6 = 0;
+    inline static long stage7 = 0;
+    inline static long stage8 = 0;
+    inline static long stage9 = 0;
+
     // handle both point vector data and array data
     static void splitKmeansNonRec(
             uint32_t numPoints,
@@ -680,12 +690,27 @@ struct SolutionKmeans {
             float points[][112],
             vector<KnnSetScannableSimd>& idToKnn) {
 
+
+        stage1 = 0;
+        stage2 = 0;
+        stage3 = 0;
+        stage4 = 0;
+        stage5 = 0;
+        stage6 = 0;
+        stage7 = 0;
+        stage8 = 0;
+        stage9 = 0;
+
+
         vector<uint32_t> id_to_group(numPoints, 1);
         uint32_t depth = requiredHashFuncs(numPoints, maxGroupSize);
         uint32_t d = 0;
         while (d++ < depth) {
+            auto s1 = hclock::now();
             auto perGroupSamples = getPerGroupsSample(numPoints, id_to_group);
+            stage1 += duration_cast<milliseconds>(hclock::now() - s1).count();
 
+            auto s2 = hclock::now();
             // build centers;
             tsl::robin_map<uint32_t, pair<Vec, Vec>> groupCenters;
             tsl::robin_map<uint32_t, pair<float, Vec>> groupPlane;
@@ -702,8 +727,11 @@ struct SolutionKmeans {
                 auto offset = dot(between.data(), coefs.data());
                 groupPlane[grp] = { offset, coefs };
             };
+            stage2 += duration_cast<milliseconds>(hclock::now() - s2).count();
 
             for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
+
+                auto s3 = hclock::now();
                 using centroid_agg = pair<uint32_t, vector<double>>;
                 using group_center_agg = tsl::robin_map<uint32_t, pair<centroid_agg, centroid_agg>>;
                 tbb::combinable<group_center_agg> agg;
@@ -727,6 +755,9 @@ struct SolutionKmeans {
                         }
                     }
                 );
+                stage3 += duration_cast<milliseconds>(hclock::now() - s3).count();
+
+                auto s4 = hclock::now();
                 auto per_group_center_aggs = agg.combine([](const group_center_agg& x, const group_center_agg& y) {
                     group_center_agg res;
                     res.insert(x.begin(), x.end());
@@ -745,7 +776,9 @@ struct SolutionKmeans {
                     }
                     return res;
                 });
+                stage4 += duration_cast<milliseconds>(hclock::now() - s4).count();
 
+                auto s5 = hclock::now();
                 for (auto& [grp, center_aggs] : per_group_center_aggs)  {
                     auto& [center1, center2] = groupCenters[grp];
                     auto& [c1_agg, c2_agg] = center_aggs;
@@ -758,8 +791,10 @@ struct SolutionKmeans {
                     auto offset = dot(between.data(), coefs.data());
                     groupPlane[grp] = { offset, coefs };
                 };
+                stage5 += duration_cast<milliseconds>(hclock::now() - s5).count();
             }
 
+            auto s6 = hclock::now();
             tbb::parallel_for(
                 tbb::blocked_range<uint32_t>(0, numPoints),
                 [&](tbb::blocked_range<uint32_t> r) {
@@ -770,8 +805,10 @@ struct SolutionKmeans {
                     }
                 }
             );
+            stage6 += duration_cast<milliseconds>(hclock::now() - s6).count();
         }
 
+        auto s7 = hclock::now();
         using grp_to_group = tsl::robin_map<uint32_t, vector<uint32_t>>;
         tbb::combinable<grp_to_group> final_groups;
         tbb::parallel_for(
@@ -800,7 +837,9 @@ struct SolutionKmeans {
             }
             return res;
         });
+        stage7 += duration_cast<milliseconds>(hclock::now() - s7).count();
 
+        auto s8 = hclock::now();
         vector<vector<uint32_t>> groups;
         groups.reserve(final.size());
         for (auto& [id, group] : final) {
@@ -812,7 +851,9 @@ struct SolutionKmeans {
         }
         std::cout << "num groups: " << groups.size() << "\n";
         final.clear();
+        stage8 += duration_cast<milliseconds>(hclock::now() - s8).count();
 
+        auto s9 = hclock::now();
         tbb::parallel_for(
             tbb::blocked_range<uint32_t>(0, groups.size()),
             [&](tbb::blocked_range<uint32_t> r) {
@@ -821,13 +862,14 @@ struct SolutionKmeans {
                 }
             }
         );
+        stage9 += duration_cast<milliseconds>(hclock::now() - s9).count();
     }
 
     static void constructResult(float points[][112], uint32_t numPoints, vector<vector<uint32_t>>& result) {
 
         bool localRun = getenv("LOCAL_RUN");
         auto numThreads = std::thread::hardware_concurrency();
-        long timeBoundsMs = (localRun || numPoints == 10'000)  ? 20'000 : 1'150'000;
+        long timeBoundsMs = (localRun || numPoints == 10'000)  ? 20'000 : 1'650'000;
 
 
 
@@ -837,7 +879,7 @@ struct SolutionKmeans {
         vector<KnnSetScannableSimd> idToKnn(numPoints);
 
         uint32_t iteration = 0;
-//        while (iteration < 3) {
+//        while (iteration < 10) {
         while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
             std::cout << "Iteration: " << iteration << '\n';
 
@@ -851,6 +893,17 @@ struct SolutionKmeans {
             std::cout << " avg group time: " << groupDuration - avgProcessTime << '\n';
             std::cout << " avg process time: " << avgProcessTime << '\n';
             processTime = 0;
+
+            std::cout << "s1: "  << stage1 << "\n";
+            std::cout << "s2: "  << stage2 << "\n";
+            std::cout << "s3: "  << stage3 << "\n";
+            std::cout << "s4: "  << stage4 << "\n";
+            std::cout << "s5: "  << stage5 << "\n";
+            std::cout << "s6: "  << stage6 << "\n";
+            std::cout << "s7: "  << stage7 << "\n";
+            std::cout << "s8: "  << stage8 << "\n";
+            std::cout << "s9: "  << stage9 << "\n";
+
 
             iteration++;
         }
