@@ -486,8 +486,8 @@ struct SolutionKmeans {
             std::memcpy(it2, group2.data(), group2.size() * sizeof(uint32_t));
 
             tbb::parallel_invoke(
-                [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, shouldSplit); }
-                [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices, indices2, ranges, shouldsplit); }
+                [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, shouldSplit); },
+                [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices, indices2, ranges, shouldSplit); }
             );
         }
     }
