@@ -54,8 +54,8 @@ float distance(const float* lhs, const float* rhs) {
     auto* r = rhs;
     auto* l = lhs;
     for (uint32_t i = 0; i < 96; i+=8) {
-        __m256 rs = _mm256_loadu_ps(r);
-        __m256 ls = _mm256_loadu_ps(l);
+        __m256 rs = _mm256_load_ps(r);
+        __m256 ls = _mm256_load_ps(l);
         __m256 diff = _mm256_sub_ps(ls, rs);
         sum = _mm256_fmadd_ps(diff, diff, sum);
         r += 8;

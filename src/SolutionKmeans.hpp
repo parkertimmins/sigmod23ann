@@ -732,7 +732,7 @@ struct SolutionKmeans {
             for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
 
                 auto s3 = hclock::now();
-                using centroid_agg = pair<uint32_t, vector<double>>;
+                using centroid_agg = pair<uint32_t, vector<float>>;
                 using group_center_agg = tsl::robin_map<uint32_t, pair<centroid_agg, centroid_agg>>;
                 tbb::combinable<group_center_agg> agg;
                 tbb::parallel_for(
@@ -744,7 +744,7 @@ struct SolutionKmeans {
                             auto& [offset, coefs] = groupPlane[grp];
 
                             if (center_agg.find(grp) == center_agg.end()) {
-                                center_agg[grp] = { { 0, vector<double>(100, 0.0f) }, { 0, vector<double>(100, 0.0f) } };
+                                center_agg[grp] = { { 0, vector<float>(100, 0.0f) }, { 0, vector<float>(100, 0.0f) } };
                             }
 
                             auto& pt = points[i];
@@ -797,7 +797,7 @@ struct SolutionKmeans {
             auto s6 = hclock::now();
             tbb::parallel_for(
                 tbb::blocked_range<uint32_t>(0, numPoints),
-                [&](tbb::blocked_range<uint32_t> r) {
+                [&](tbb::blocked_range<uint32_t>& r) {
                     for (uint32_t i = r.begin(); i < r.end(); ++i) {
                         uint32_t grp = id_to_group[i];
                         auto& [offset, coefs] = groupPlane[grp];
@@ -813,7 +813,7 @@ struct SolutionKmeans {
         tbb::combinable<grp_to_group> final_groups;
         tbb::parallel_for(
             tbb::blocked_range<uint32_t>(0, numPoints),
-            [&](tbb::blocked_range<uint32_t> r) {
+            [&](tbb::blocked_range<uint32_t>& r) {
                 auto& local_final_groups = final_groups.local();
                 for (uint32_t i = r.begin(); i < r.end(); ++i) {
                     uint32_t grp = id_to_group[i];
@@ -843,7 +843,7 @@ struct SolutionKmeans {
         vector<vector<uint32_t>> groups;
         groups.reserve(final.size());
         for (auto& [id, group] : final) {
-            if (group.size() < 10'000) {
+            if (group.size() < 3 * maxGroupSize) {
                 groups.push_back(group);
             } else {
                 std::cout << "too large: " << group.size() << "\n";

@@ -325,7 +325,7 @@ void addCandidatesGroup(float points[][112],
                         vector<TKnnSet>& idToKnn) {
 
     uint32_t groupSize = group.size();
-    vector<float[112]> pointsCopy(groupSize);
+    float (*pointsCopy)[112] = static_cast<float(*)[112]>(aligned_alloc(64, groupSize * 112 * sizeof(float)));
     for (uint32_t i=0; i < groupSize; ++i) {
         std::memcpy(pointsCopy[i], points[group[i]], 100 * sizeof(float));
     }
@@ -339,6 +339,7 @@ void addCandidatesGroup(float points[][112],
             idToKnn[id2].addCandidate(id1, dist);
         }
     }
+    free(pointsCopy);
 }
 
 static bool contains(vector<uint32_t>& currIds, uint32_t candidateId) {
