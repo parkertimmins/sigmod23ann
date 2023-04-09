@@ -330,16 +330,13 @@ struct SolutionKmeans {
                                      uint32_t maxGroupSize,
                                      float points[][112],
                                      float pointsCopy[][112],
-                                     float* pointsCol,
                                      vector<uint32_t>& indices,
                                      vector<uint32_t>& indices2,
                                      tbb::concurrent_vector<Range>& ranges,
                                      bool shouldSplit,
-                                     uint32_t depth,
-                                     uint32_t numPoints
+                                     uint32_t depth
 
     ) {
-        uint32_t numElements = 20;
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize) {
             ranges.push_back(range);
@@ -401,8 +398,8 @@ struct SolutionKmeans {
             auto depthDuration = duration_cast<milliseconds>(hclock::now() - startDepth).count();
             depthTimes[depth] += depthDuration;
 
-            splitKmeansBinary(lo, knnIterations, maxGroupSize, points, pointsCopy, pointsCol, indices, indices2, ranges, false, depth+1, numPoints);
-            splitKmeansBinary(hi, knnIterations, maxGroupSize, points, pointsCopy, pointsCol, indices, indices2, ranges, false, depth+1, numPoints);
+            splitKmeansBinary(lo, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, false, depth+1);
+            splitKmeansBinary(hi, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, false, depth+1);
         } else {
             auto startDepth = hclock::now();
 
@@ -461,10 +458,7 @@ struct SolutionKmeans {
             // compute final groups
             auto between = scalarMult(0.5, add(center1, center2));
             auto coefs = sub(center1, between);
-            auto coefsDesc = getSortedIndices(coefs);
-            coefsDesc.resize(numElements);
-            auto offset = dot(coefsDesc, between.data());
-
+            auto offset = dot(between.data(), coefs.data());
 
             using groups = pair<vector<uint32_t>, vector<uint32_t>>;
             tbb::combinable<groups> groupsAgg(make_pair<>(vector<uint32_t>(), vector<uint32_t>()));
@@ -475,7 +469,7 @@ struct SolutionKmeans {
                     for (uint32_t i = r.begin(); i < r.end(); ++i) {
                         auto id = indices[i];
                         auto& pt = points[id];
-                        auto& group = dot(coefsDesc, pointsCol, numPoints, id) >= offset ? g1 : g2;
+                        auto& group = dot(coefs.data(), pt) >= offset ? g1 : g2;
                         group.push_back(id);
                     }
                 }
@@ -518,8 +512,8 @@ struct SolutionKmeans {
 //                );
 //            } else {
                 tbb::parallel_invoke(
-                    [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, pointsCol, indices, indices2, ranges, shouldSplit, depth+1, numPoints); },
-                    [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy, pointsCol, indices, indices2, ranges, shouldSplit, depth+1, numPoints); }
+                    [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, shouldSplit, depth+1); },
+                    [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices, indices2, ranges, shouldSplit, depth+1); }
                 );
 //            };
 
@@ -941,7 +935,7 @@ struct SolutionKmeans {
             depthTimes.clear(); depthTimes.resize(50, 0); // should never need depth 100!
 
             auto startGroup = hclock::now();
-            splitKmeansBinary({0, numPoints}, 1, 400, points, pointsCopy, pointsCol, indices, indices2, ranges, true, 0, numPoints);
+            splitKmeansBinary({0, numPoints}, 1, 400, points, pointsCopy, indices, indices2, ranges, true, 0);
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
 
             std::cout << "num ranges: " << ranges.size() << "\n";
