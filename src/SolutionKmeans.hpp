@@ -476,19 +476,20 @@ struct SolutionKmeans {
             );
             auto [group1, group2] = groupsAgg.combine([](const groups& x, const groups& y) {
                 vector<uint32_t> g1;
-                g1.reserve(x.first.size() + y.first.size());
-                std::merge(x.first.begin(), x.first.end(), y.first.begin(), y.first.end(), std::back_inserter(g1));
-
                 vector<uint32_t> g2;
-                g2.reserve(x.second.size() + y.second.size());
-                std::merge(x.second.begin(), x.second.end(), y.second.begin(), y.second.end(), std::back_inserter(g2));
-
+                g1.insert(g1.end(), x.first.begin(), x.first.end());
+                g1.insert(g1.end(), y.first.begin(), y.first.end());
+                g2.insert(g2.end(), x.second.begin(), x.second.end());
+                g2.insert(g2.end(), y.second.begin(), y.second.end());
                 return make_pair(g1, g2);
             });
 
             if (group1.empty() || group2.empty()) {
                 goto begin_kmeans;
             }
+
+            tbb::parallel_sort(group1.begin(), group1.end());
+            tbb::parallel_sort(group2.begin(), group2.end());
 
             // build ranges
             uint32_t subRange1Start = range.first;
