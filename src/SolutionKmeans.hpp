@@ -481,7 +481,7 @@ struct SolutionKmeans {
             auto it2 = indices.data() + subRange2Start;
             std::memcpy(it2, group2.data(), group2.size() * sizeof(uint32_t));
 
-            if (shouldSplit && maxGroupSize < 20'000) {
+            if (shouldSplit && maxGroupSize < 6'000) {
                 std::memcpy(indices2.data() + range.first, indices.data() + range.first, rangeSize * sizeof(uint32_t));
                 tbb::parallel_invoke(
                     [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices2, indices, ranges, false); },
