@@ -381,11 +381,7 @@ struct SolutionKmeans {
                 goto begin_kmeans_small;
             }
 
-            if (shouldSplit) {
-                std::memcpy(indices2.data() + range.first, indices.data() + range.first, rangeSize * sizeof(uint32_t));
-                splitKmeansBinary(lo, knnIterations, maxGroupSize, points, pointsCopy, indices2, indices, ranges, false);
-                splitKmeansBinary(hi, knnIterations, maxGroupSize, points, pointsCopy, indices2, indices, ranges, false);
-            }
+
             splitKmeansBinary(lo, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, false);
             splitKmeansBinary(hi, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, false);
         } else {
@@ -485,10 +481,21 @@ struct SolutionKmeans {
             auto it2 = indices.data() + subRange2Start;
             std::memcpy(it2, group2.data(), group2.size() * sizeof(uint32_t));
 
-            tbb::parallel_invoke(
-                [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, shouldSplit); },
-                [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices, indices2, ranges, shouldSplit); }
-            );
+            if (shouldSplit && maxGroupSize < 20'000) {
+                std::memcpy(indices2.data() + range.first, indices.data() + range.first, rangeSize * sizeof(uint32_t));
+                tbb::parallel_invoke(
+                    [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices2, indices, ranges, false); },
+                    [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices2, indices, ranges, false); },
+                    [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, false); },
+                    [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices, indices2, ranges, false); }kjA
+                );
+            } else {
+                tbb::parallel_invoke(
+                    [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, shouldSplit); },
+                    [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices, indices2, ranges, shouldSplit); }
+                );
+            };
+
         }
     }
 
