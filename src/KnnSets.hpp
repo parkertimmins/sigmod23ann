@@ -28,7 +28,6 @@ public:
     alignas(sizeof(__m256)) float dists[104] = { 0 };
     alignas(sizeof(__m256)) uint32_t current_ids[100] = {};
     uint32_t size = 0;
-    float lower_bound = 0; // 0 -> max val in first 100 -> decreases
     uint32_t lowerBoundIdx = -1;
     bool contains(uint32_t node) {
         for (uint32_t i = 0; i < size; ++i) {
@@ -91,25 +90,22 @@ public:
         return maxIdx;
     }
 
-    // This may misorder nodes of equal sizes
-    bool addCandidate(const uint32_t candidate_id, float dist) {
+    bool addCandidateLessThan(float& lower_bound, const uint32_t candidate_id, float dist) {
         if (size < k) {
             if (!contains(candidate_id)) {
-                auto idx = append(candidate_id, dist);
-                if (dist > lower_bound) {
-                    lower_bound = dist;
-                    lowerBoundIdx = idx;
+                append(candidate_id, dist);
+                if (size == k) {
+                    lowerBoundIdx = getMaxIdx();
+                    lower_bound = dists[lowerBoundIdx];
                 }
                 return true;
             }
-        } else if (dist < lower_bound) {
-            if (!containsFull(candidate_id)) {
-                dists[lowerBoundIdx] = dist;
-                current_ids[lowerBoundIdx] = candidate_id;
-                lowerBoundIdx = getMaxIdx();
-                lower_bound = dists[lowerBoundIdx];
-                return true;
-            }
+        } else if (!containsFull(candidate_id)) {
+            dists[lowerBoundIdx] = dist;
+            current_ids[lowerBoundIdx] = candidate_id;
+            lowerBoundIdx = getMaxIdx();
+            lower_bound = dists[lowerBoundIdx];
+            return true;
         }
         return false;
     }
@@ -302,6 +298,37 @@ void addCandidatesCopy(
             float dist = distance(pointsCopy[i], pointsCopy[j]);
             knn1.addCandidate(id2, dist);
             idToKnn[id2].addCandidate(id1, dist);
+        }
+    }
+}
+
+void addCandidatesLessThan(
+                   float points[][112],
+                   float pointsCopy[][112],
+                   vector<uint32_t>& indices,
+                   Range range,
+                   vector<float>& bounds,
+                   vector<KnnSetScannableSimd>& idToKnn) {
+
+    for (uint32_t i=range.first; i < range.second; ++i) {
+        std::memcpy(pointsCopy[i], points[indices[i]], 100 * sizeof(float));
+    }
+    for (uint32_t i=range.first; i < range.second-1; ++i) {
+        auto id1 = indices[i];
+        auto& knn1 = idToKnn[id1];
+        auto& bound1 = bounds[id1];
+        for (uint32_t j=i+1; j < range.second; ++j) {
+            float dist = distance(pointsCopy[i], pointsCopy[j]);
+
+            auto id2 = indices[j];
+            auto& knn2 = idToKnn[id2];
+            auto& bound2 = bounds[id2];
+            if (dist < bound1) {
+                knn1.addCandidateLessThan(bound1, id2, dist);
+            }
+            if (dist < bound2) {
+                knn2.addCandidateLessThan(bound2, id1, dist);
+            }
         }
     }
 }

@@ -146,7 +146,7 @@ struct SolutionKmeans {
                                      float points[][112],
                                      float pointsCopy[][112],
                                      vector<uint32_t>& indices,
-                                     vector<KnnSetScannableSimd>& idToKnn
+                                     vector<KnnSetScannable>& idToKnn
     ) {
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize) {
@@ -312,6 +312,7 @@ struct SolutionKmeans {
         }
     }
 
+    inline static vector<long> depthTimes;
 
     // handle both point vector data and array data
     static void splitKmeansBinary(Range range,
@@ -322,13 +323,16 @@ struct SolutionKmeans {
                                      vector<uint32_t>& indices,
                                      vector<uint32_t>& indices2,
                                      tbb::concurrent_vector<Range>& ranges,
-                                     bool shouldSplit
+                                     bool shouldSplit,
+                                     uint32_t depth
 
     ) {
         uint32_t rangeSize = range.second - range.first;
         if (rangeSize < maxGroupSize) {
             ranges.push_back(range);
         } else if (rangeSize < 3'000) { // last two splits single threaded in hope of maintain cache locality
+            auto startDepth = hclock::now();
+
             begin_kmeans_small:
 
             float percSample = calcSamplePercent(range.first, range.second);
@@ -381,10 +385,14 @@ struct SolutionKmeans {
                 goto begin_kmeans_small;
             }
 
+            auto depthDuration = duration_cast<milliseconds>(hclock::now() - startDepth).count();
+            depthTimes[depth] += depthDuration;
 
-            splitKmeansBinary(lo, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, false);
-            splitKmeansBinary(hi, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, false);
+            splitKmeansBinary(lo, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, false, depth+1);
+            splitKmeansBinary(hi, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, false, depth+1);
         } else {
+            auto startDepth = hclock::now();
+
             begin_kmeans:
 
             float percSample = calcSamplePercent(range.first, range.second);
@@ -481,94 +489,97 @@ struct SolutionKmeans {
             auto it2 = indices.data() + subRange2Start;
             std::memcpy(it2, group2.data(), group2.size() * sizeof(uint32_t));
 
-            if (shouldSplit && maxGroupSize < 6'000) {
-                std::memcpy(indices2.data() + range.first, indices.data() + range.first, rangeSize * sizeof(uint32_t));
+            auto depthDuration = duration_cast<milliseconds>(hclock::now() - startDepth).count();
+            depthTimes[depth] += depthDuration;
+
+//            if (shouldSplit && maxGroupSize < 6'000) {
+//                std::memcpy(indices2.data() + range.first, indices.data() + range.first, rangeSize * sizeof(uint32_t));
+//                tbb::parallel_invoke(
+//                    [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices2, indices, ranges, false, depth+1); },
+//                    [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices2, indices, ranges, false, depth+1); },
+//                    [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, false, depth+1); },
+//                    [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices, indices2, ranges, false, depth+1); }
+//                );
+//            } else {
                 tbb::parallel_invoke(
-                    [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices2, indices, ranges, false); },
-                    [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices2, indices, ranges, false); },
-                    [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, false); },
-                    [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices, indices2, ranges, false); }
+                    [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, shouldSplit, depth+1); },
+                    [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices, indices2, ranges, shouldSplit, depth+1); }
                 );
-            } else {
-                tbb::parallel_invoke(
-                    [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, shouldSplit); },
-                    [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices, indices2, ranges, shouldSplit); }
-                );
-            };
+//            };
 
         }
     }
 
-
-    static uint64_t topUpSingle(float points[][112], vector<KnnSetScannableSimd>& idToKnn) {
-        auto startTopup = hclock::now();
-        uint32_t numPoints = idToKnn.size();
-
-        std::atomic<uint64_t> nodesUpdated = 0;
-        std::atomic<uint64_t> nodesAdded = 0;
-
-        vector<vector<uint32_t>> knnIds(numPoints);
-        tbb::parallel_for(
-            tbb::blocked_range<size_t>(0, numPoints),
-            [&](oneapi::tbb::blocked_range<size_t> r) {
-                for (auto id = r.begin(); id < r.end(); ++id) {
-                    vector<uint32_t> ids;
-                    ids.reserve(100);
-                    for (auto& id2 : idToKnn[id].current_ids) {
-                        ids.push_back(id2);
-                    }
-                    std::sort(ids.begin(), ids.end());
-                    knnIds[id] = std::move(ids);
-                }
-            }
-        );
-
-        std::cout << "top copy idKnnSet time: " << duration_cast<milliseconds>(hclock::now() - startTopup).count() << "\n";
-
-        std::atomic<uint32_t> count = 0;
-        tbb::parallel_for(
-            tbb::blocked_range<size_t>(0, numPoints),
-            [&](oneapi::tbb::blocked_range<size_t> r) {
-                tsl::robin_set<uint32_t> candidates;
-                for (auto id1 = r.begin(); id1 < r.end(); ++id1) {
-                    uint32_t added = 0;
-                    auto& knn = knnIds[id1];
-                    auto& knnSet = idToKnn[id1];
-                    for (auto& id2 : knnIds[id1]) {
-                        for (auto& id3 : knnIds[id2]) {
-                            candidates.insert(id3);
-                        }
-                    }
-
-                    // remove current ids and self id
-//                    for (auto& id2 : knnIds[id1]) { candidates.erase(id2); }
-                    candidates.erase(id1);
-
-                    for (auto& id3 : candidates) {
-                        float dist = distance(points[id3], points[id1]);
-                        if (knnSet.addCandidate(id3, dist)) {
-                            added++;
-                        }
-                    }
-                    candidates.clear();
-
-                    auto currCount = count++;
-                    if (currCount % 10'000 == 0) {
-                        auto topupTime = duration_cast<milliseconds>(hclock::now() - startTopup).count();
-                        std::cout << "topped up: " << currCount << ", timing topping up:" << topupTime << "\n";
-                    }
-                    if (added > 0) {
-                        nodesUpdated++;
-                        nodesAdded += added;
-                    }
-                }
-            }
-        );
-
-        std::cout << "topUp nodes added: " << nodesAdded << "\n";
-        std::cout << "topUp nodes changed: " << nodesUpdated << "\n";
-        return nodesUpdated.load();
-    }
+//
+//    static uint64_t topUpSingle(float points[][112], vector<KnnSetScannableSimd>& idToKnn) {
+//        auto startTopup = hclock::now();
+//        uint32_t numPoints = idToKnn.size();
+//
+//        std::atomic<uint64_t> nodesUpdated = 0;
+//        std::atomic<uint64_t> nodesAdded = 0;
+//
+//        vector<vector<uint32_t>> knnIds(numPoints);
+//        tbb::parallel_for(
+//            tbb::blocked_range<size_t>(0, numPoints),
+//            [&](oneapi::tbb::blocked_range<size_t> r) {
+//                for (auto id = r.begin(); id < r.end(); ++id) {
+//                    vector<uint32_t> ids;
+//                    ids.reserve(100);
+//                    for (auto& id2 : idToKnn[id].current_ids) {
+//                        ids.push_back(id2);
+//                    }
+//                    std::sort(ids.begin(), ids.end());
+//                    knnIds[id] = std::move(ids);
+//                }
+//            }
+//        );
+//
+//        std::cout << "top copy idKnnSet time: " << duration_cast<milliseconds>(hclock::now() - startTopup).count() << "\n";
+//
+//        std::atomic<uint32_t> count = 0;
+//        tbb::parallel_for(
+//            tbb::blocked_range<size_t>(0, numPoints),
+//            [&](oneapi::tbb::blocked_range<size_t> r) {
+//                tsl::robin_set<uint32_t> candidates;
+//                for (auto id1 = r.begin(); id1 < r.end(); ++id1) {
+//                    uint32_t added = 0;
+//                    auto& knn = knnIds[id1];
+//                    auto& knnSet = idToKnn[id1];
+//                    for (auto& id2 : knnIds[id1]) {
+//                        for (auto& id3 : knnIds[id2]) {
+//                            candidates.insert(id3);
+//                        }
+//                    }
+//
+//                    // remove current ids and self id
+////                    for (auto& id2 : knnIds[id1]) { candidates.erase(id2); }
+//                    candidates.erase(id1);
+//
+//                    for (auto& id3 : candidates) {
+//                        float dist = distance(points[id3], points[id1]);
+//                        if (knnSet.addCandidate(id3, dist)) {
+//                            added++;
+//                        }
+//                    }
+//                    candidates.clear();
+//
+//                    auto currCount = count++;
+//                    if (currCount % 10'000 == 0) {
+//                        auto topupTime = duration_cast<milliseconds>(hclock::now() - startTopup).count();
+//                        std::cout << "topped up: " << currCount << ", timing topping up:" << topupTime << "\n";
+//                    }
+//                    if (added > 0) {
+//                        nodesUpdated++;
+//                        nodesAdded += added;
+//                    }
+//                }
+//            }
+//        );
+//
+//        std::cout << "topUp nodes added: " << nodesAdded << "\n";
+//        std::cout << "topUp nodes changed: " << nodesUpdated << "\n";
+//        return nodesUpdated.load();
+//    }
 
 
     static uint64_t topUp(float points[][112], vector<KnnSetScannable>& idToKnn) {
@@ -699,7 +710,7 @@ struct SolutionKmeans {
             uint32_t knnIterations,
             uint32_t maxGroupSize,
             float points[][112],
-            vector<KnnSetScannableSimd>& idToKnn) {
+            vector<KnnSetScannable>& idToKnn) {
 
 
         stage1 = 0;
@@ -888,6 +899,8 @@ struct SolutionKmeans {
         std::cout << "start run with time bound: " << timeBoundsMs << '\n';
 
         auto startTime = hclock::now();
+        vector<float> bounds(numPoints, std::numeric_limits<float>::max());
+
         vector<KnnSetScannableSimd> idToKnn(numPoints);
 
         // rewrite point data in adjacent memory and sort in a group order
@@ -902,8 +915,10 @@ struct SolutionKmeans {
 
             std::iota(indices.begin(), indices.end(), 0);
 
+            depthTimes.clear(); depthTimes.resize(50, 0); // should never need depth 100!
+
             auto startGroup = hclock::now();
-            splitKmeansBinary({0, numPoints}, 1, 400, points, pointsCopy, indices, indices2, ranges, true);
+            splitKmeansBinary({0, numPoints}, 1, 400, points, pointsCopy, indices, indices2, ranges, true, 0);
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
 
             std::cout << "num ranges: " << ranges.size() << "\n";
@@ -915,7 +930,7 @@ struct SolutionKmeans {
                     auto task = tasks.getTask();
                     while (task) {
                         auto range = *task;
-                        addCandidatesCopy(points, pointsCopy, indices, range, idToKnn);
+                        addCandidatesLessThan(points, pointsCopy, indices, range, bounds, idToKnn);
                         task = tasks.getTask();
                     }
                 });
@@ -928,6 +943,12 @@ struct SolutionKmeans {
             processTime = 0;
 
             iteration++;
+
+            for (uint32_t d = 0; d < depthTimes.size(); ++d) {
+                if (depthTimes[d] > 0) {
+                    std::cout << "depth " << d << " time: " << depthTimes[d] << "\n";
+                }
+            }
             ranges.clear();
         }
 
@@ -936,6 +957,14 @@ struct SolutionKmeans {
         for (uint32_t id = 0; id < numPoints; ++id) {
             result[id] = idToKnn[id].finalize();
         }
+
+//        for (uint32_t i = 0; i < numPoints; ++i) {
+//            float lb = bounds[i];
+//            auto& knn = idToKnn[i];
+//            if (knn.size < 100) {
+//                std::cout << "i: " << i << ", lower bound: " << lb << ", size: " << knn.size << "\n";
+//            }
+//        }
 
         auto sizes = padResult(numPoints, result);
 
