@@ -324,6 +324,119 @@ struct SolutionKmeans {
         return with_idx;
     }
 
+
+    static vector<double> getMeanSample(float points[][112], vector<uint32_t>& indices, vector<uint32_t>& rangeSample) {
+        tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, rangeSample.size(), 1000),
+            [&](oneapi::tbb::blocked_range<size_t> r) {
+                auto& sumsLocal = sums.local();
+                for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                    auto& pt = points[indices[rangeSample[i]]];
+                    for (uint32_t j = 0; j < dims; ++j) { sumsLocal[j] += pt[j]; }
+                }
+            }
+        );
+        auto sumsGlobal = sums.combine([](const vector<double>& x, const vector<double>& y) {
+            vector<double> res(100, 0.0f);
+            for (uint32_t j = 0; j < dims; ++j) { res[j]  = x[j] + y[j]; }
+            return res;
+        });
+
+        auto size = rangeSample.size();
+        for (auto& v : sumsGlobal) {
+            v /= size;
+        }
+        return sumsGlobal;
+    }
+
+    static vector<double> getMean(float points[][112], vector<uint32_t>& indices, Range range) {
+        uint32_t rangeSize = range.second - range.first;
+        tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, rangeSize, 1000),
+            [&](oneapi::tbb::blocked_range<size_t> r) {
+                auto& sumsLocal = sums.local();
+                for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                    auto& pt = points[indices[i]];
+                    for (uint32_t j = 0; j < dims; ++j) { sumsLocal[j] += pt[j]; }
+                }
+            }
+        );
+        auto sumsGlobal = sums.combine([](const vector<double>& x, const vector<double>& y) {
+            vector<double> res(100, 0.0f);
+            for (uint32_t j = 0; j < dims; ++j) { res[j]  = x[j] + y[j]; }
+            return res;
+        });
+
+        for (auto& v : sumsGlobal) {
+            v /= rangeSize;
+        }
+        return sumsGlobal;
+    }
+
+    static vector<uint32_t> getSample(uint32_t min, uint32_t max) {
+        uint32_t sampleSize = calcSampleSize(min, max);
+        vector<uint32_t> sample;
+        sample.reserve(sampleSize);
+        std::uniform_int_distribution<uint32_t> distribution(min, max-1);
+        while (sample.size() < sampleSize) {
+            sample.push_back(distribution(rd));
+        }
+        return sample;
+    }
+    static uint32_t calcSampleSize(uint32_t min, uint32_t max) {
+        uint32_t rangeSize = max - min;
+//        return rangeSize / 3;
+        return pow(log(rangeSize) / log(30), 7);
+    }
+    static vector<double> getVarianceSample(vector<double>& means, float points[][112], vector<uint32_t>& indices, vector<uint32_t>& rangeSample) {
+        tbb::combinable<vector<double>> sums(vector<double>(100, 0.0f));
+        tbb::parallel_for(
+                tbb::blocked_range<size_t>(0, rangeSample.size(), 1000),
+                [&](oneapi::tbb::blocked_range<size_t> r) {
+                    auto& sumsLocal = sums.local();
+                    for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                        auto& pt = points[indices[rangeSample[i]]];
+                        for (uint32_t j = 0; j < dims; ++j) {
+                            auto diff = pt[j] - means[j];
+                            sumsLocal[j] += diff * diff;
+                        }
+                    }
+                }
+        );
+        auto sumsGlobal = sums.combine([](const vector<double>& x, const vector<double>& y) {
+            vector<double> res(100, 0.0f);
+            for (uint32_t j = 0; j < dims; ++j) { res[j]  = x[j] + y[j]; }
+            return res;
+        });
+
+        auto size = rangeSample.size();
+        for (auto& v : sumsGlobal) {
+            v /= (size - 1);
+        }
+        return sumsGlobal;
+    }
+
+    static uint32_t pickIndex(float points[][112], vector<uint32_t>& indices, vector<uint32_t>& rangeSample) {
+        auto means = getMeanSample(points, indices, rangeSample);
+        auto variances = getVarianceSample(means, points, indices, rangeSample);
+
+        // pick dimension
+        vector<pair<double, uint32_t>> varianceIndices;
+        varianceIndices.reserve(100);
+        for (uint32_t j = 0; j < dims; ++j) {
+            varianceIndices.emplace_back(variances[j], j);
+        }
+        std::sort(varianceIndices.begin(), varianceIndices.end(), std::greater{});
+        uint32_t indexSampleRange = 15;
+        std::uniform_int_distribution<uint32_t> distribution(0, indexSampleRange);
+        auto [var, idx] = varianceIndices[distribution(rd)];
+        return idx;
+    }
+
+
+
     // handle both point vector data and array data
     static void splitKmeansBinary(Range range,
                                      uint32_t knnIterations,
@@ -358,8 +471,8 @@ struct SolutionKmeans {
                 centroid_agg c2 = make_pair(0, vector<float>(100, 0.0));
 
                 for (uint32_t i = range.first; i < range.second; ++i) {
-                    auto& pt = points[indices[i]];
-                    centroid_agg& ca = dot(coefs.data(), pt) >= offset ? c1 : c2;
+                    auto &pt = points[indices[i]];
+                    centroid_agg &ca = dot(coefs.data(), pt) >= offset ? c1 : c2;
                     ca.first++;
                     for (uint32_t j = 0; j < dims; ++j) { ca.second[j] += pt[j]; }
                 }
@@ -388,7 +501,7 @@ struct SolutionKmeans {
             auto range1Size = middleIt - indicesBegin;
             auto range2Size = indicesEnd - middleIt;
             Range lo = {range.first, range.first + range1Size};
-            Range hi = {range.first + range1Size , range.second};
+            Range hi = {range.first + range1Size, range.second};
 
             if (range1Size == 0 || range2Size == 0) {
                 goto begin_kmeans_small;
@@ -397,8 +510,78 @@ struct SolutionKmeans {
             auto depthDuration = duration_cast<milliseconds>(hclock::now() - startDepth).count();
             depthTimes[depth] += depthDuration;
 
-            splitKmeansBinary(lo, knnIterations, maxGroupSize, points, pointsCopy, indices, ranges, false, depth+1);
-            splitKmeansBinary(hi, knnIterations, maxGroupSize, points, pointsCopy, indices, ranges, false, depth+1);
+            splitKmeansBinary(lo, knnIterations, maxGroupSize, points, pointsCopy, indices, ranges, false, depth + 1);
+            splitKmeansBinary(hi, knnIterations, maxGroupSize, points, pointsCopy, indices, ranges, false, depth + 1);
+        } else if (depth < 6) {
+            auto startDepth = hclock::now();
+
+            // get range sample
+            auto sampleRange = getSample(range.first, range.second);
+            uint32_t idx = pickIndex(points, indices, sampleRange);
+
+            // get sample of column
+            vector<float> sample;
+            sample.reserve(sampleRange.size());
+            for (auto& i : sampleRange) {
+                sample.push_back(points[indices[i]][idx]);
+            }
+
+//            vector<float> sample;
+//            sample.reserve(rangeSize);
+//            for (uint32_t i = range.first; i < range.second; ++i) {
+//                float* pt = points[indices[i]];
+//                sample.push_back(pt[idx]);
+//            }
+
+            // 40 - 60 quantiles?
+            std::sort(sample.begin(), sample.end());
+            auto median = sample[sample.size() / 2];
+            auto splitValue = median;
+
+            // compute final groups
+            using groups = pair<vector<uint32_t>, vector<uint32_t>>;
+            tbb::combinable<groups> groupsAgg(make_pair<>(vector<uint32_t>(), vector<uint32_t>()));
+            tbb::parallel_for(
+                tbb::blocked_range<uint32_t>(range.first, range.second, 1000),
+                [&](tbb::blocked_range<uint32_t> r) {
+                    auto& [g1, g2] = groupsAgg.local();
+                    for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                        auto id = indices[i];
+                        auto& group = points[id][idx] < splitValue ? g1 : g2;
+                        group.push_back(id);
+                    }
+                }
+            );
+            auto [group1, group2] = groupsAgg.combine([](const groups& x, const groups& y) {
+                vector<uint32_t> g1;
+                vector<uint32_t> g2;
+                g1.insert(g1.end(), x.first.begin(), x.first.end());
+                g1.insert(g1.end(), y.first.begin(), y.first.end());
+                g2.insert(g2.end(), x.second.begin(), x.second.end());
+                g2.insert(g2.end(), y.second.begin(), y.second.end());
+                return make_pair(g1, g2);
+            });
+
+            // build ranges
+            uint32_t subRange1Start = range.first;
+            uint32_t subRange2Start = range.first + group1.size();
+            Range subRange1 = {subRange1Start, subRange1Start + group1.size()};
+            Range subRange2 = {subRange2Start, subRange2Start + group2.size()};
+
+            auto depthDuration = duration_cast<milliseconds>(hclock::now() - startDepth).count();
+            depthTimes[depth] += depthDuration;
+
+            tbb::parallel_invoke(
+            [&]{
+                auto it1 = indices.data() + subRange1Start;
+                std::memcpy(it1, group1.data(), group1.size() * sizeof(uint32_t));
+                splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, ranges, shouldSplit, depth+1);
+            },
+            [&]{
+                auto it2 = indices.data() + subRange2Start;
+                std::memcpy(it2, group2.data(), group2.size() * sizeof(uint32_t));
+                splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy, indices, ranges, shouldSplit, depth+1);
+            });
         } else {
             auto startDepth = hclock::now();
 
