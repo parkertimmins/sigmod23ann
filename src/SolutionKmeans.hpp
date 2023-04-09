@@ -487,7 +487,7 @@ struct SolutionKmeans {
                     [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices2, indices, ranges, false); },
                     [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices2, indices, ranges, false); },
                     [&]{ splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, false); },
-                    [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices, indices2, ranges, false); }kjA
+                    [&]{ splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices, indices2, ranges, false); }
                 );
             } else {
                 tbb::parallel_invoke(
