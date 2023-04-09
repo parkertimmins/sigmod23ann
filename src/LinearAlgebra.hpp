@@ -21,6 +21,7 @@
 #include <emmintrin.h>
 #include <immintrin.h>
 #include "Constants.hpp"
+#include <utility>
 
 using std::vector;
 
@@ -157,6 +158,22 @@ Vec scalarMult(float c, const Vec& vec) {
         res.push_back(c * v);
     }
     return res;
+}
+
+float dot(vector<std::pair<float, uint32_t>>& sparse, float* dense) {
+    float total = 0;
+    for (auto& [val, col] : sparse) {
+        total += dense[col] * val;
+    }
+    return total;
+}
+
+float dot(vector<std::pair<float, uint32_t>>& sparse, const float* pointsCol, uint32_t numPoints, uint32_t ptId) {
+    float total = 0;
+    for (auto& [val, col] : sparse) {
+        total += pointsCol[col * numPoints + ptId] * val;
+    }
+    return total;
 }
 
 float dot(const float* lhs, const float* rhs) {
