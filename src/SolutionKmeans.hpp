@@ -331,7 +331,6 @@ struct SolutionKmeans {
                                      float points[][112],
                                      float pointsCopy[][112],
                                      vector<uint32_t>& indices,
-                                     vector<uint32_t>& indices2,
                                      tbb::concurrent_vector<Range>& ranges,
                                      bool shouldSplit,
                                      uint32_t depth
@@ -398,8 +397,8 @@ struct SolutionKmeans {
             auto depthDuration = duration_cast<milliseconds>(hclock::now() - startDepth).count();
             depthTimes[depth] += depthDuration;
 
-            splitKmeansBinary(lo, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, false, depth+1);
-            splitKmeansBinary(hi, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, false, depth+1);
+            splitKmeansBinary(lo, knnIterations, maxGroupSize, points, pointsCopy, indices, ranges, false, depth+1);
+            splitKmeansBinary(hi, knnIterations, maxGroupSize, points, pointsCopy, indices, ranges, false, depth+1);
         } else {
             auto startDepth = hclock::now();
 
@@ -499,16 +498,14 @@ struct SolutionKmeans {
 
             tbb::parallel_invoke(
             [&]{
-                tbb::parallel_sort(group1.begin(), group1.end());
                 auto it1 = indices.data() + subRange1Start;
                 std::memcpy(it1, group1.data(), group1.size() * sizeof(uint32_t));
-                splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, indices2, ranges, shouldSplit, depth+1);
+                splitKmeansBinary(subRange1, knnIterations, maxGroupSize, points, pointsCopy, indices, ranges, shouldSplit, depth+1);
             },
             [&]{
-                tbb::parallel_sort(group2.begin(), group2.end());
                 auto it2 = indices.data() + subRange2Start;
                 std::memcpy(it2, group2.data(), group2.size() * sizeof(uint32_t));
-                splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy,indices, indices2, ranges, shouldSplit, depth+1);
+                splitKmeansBinary(subRange2, knnIterations, maxGroupSize, points, pointsCopy, indices, ranges, shouldSplit, depth+1);
             });
         }
     }
@@ -915,7 +912,6 @@ struct SolutionKmeans {
 
         // rewrite point data in adjacent memory and sort in a group order
         std::vector<uint32_t> indices(numPoints);
-        std::vector<uint32_t> indices2(numPoints);
 
         tbb::concurrent_vector<Range> ranges;
         uint32_t iteration = 0;
@@ -928,7 +924,7 @@ struct SolutionKmeans {
             depthTimes.clear(); depthTimes.resize(50, 0); // should never need depth 100!
 
             auto startGroup = hclock::now();
-            splitKmeansBinary({0, numPoints}, 1, 400, points, pointsCopy, indices, indices2, ranges, true, 0);
+            splitKmeansBinary({0, numPoints}, 1, 400, points, pointsCopy, indices, ranges, true, 0);
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
 
             std::cout << "num ranges: " << ranges.size() << "\n";
