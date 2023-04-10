@@ -159,22 +159,22 @@ Vec scalarMult(float c, const Vec& vec) {
     }
     return res;
 }
-
-float dot(vector<std::pair<float, uint32_t>>& sparse, float* dense) {
-    float total = 0;
-    for (auto& [val, col] : sparse) {
-        total += dense[col] * val;
-    }
-    return total;
-}
-
-float dot(vector<std::pair<float, uint32_t>>& sparse, const float* pointsCol, uint32_t numPoints, uint32_t ptId) {
-    float total = 0;
-    for (auto& [val, col] : sparse) {
-        total += pointsCol[col * numPoints + ptId] * val;
-    }
-    return total;
-}
+//
+//float dot(vector<std::pair<float, uint32_t>>& sparse, float* dense) {
+//    float total = 0;
+//    for (auto& [val, col] : sparse) {
+//        total += dense[col] * val;
+//    }
+//    return total;
+//}
+//
+//float dot(vector<std::pair<float, uint32_t>>& sparse, const float* pointsCol, uint32_t numPoints, uint32_t ptId) {
+//    float total = 0;
+//    for (auto& [val, col] : sparse) {
+//        total += pointsCol[col * numPoints + ptId] * val;
+//    }
+//    return total;
+//}
 
 float dot(const float* lhs, const float* rhs) {
     __m256 sum  = _mm256_set1_ps(0);

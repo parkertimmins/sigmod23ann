@@ -5,7 +5,6 @@
 #include "io.h"
 #include "ann.hpp"
 #include "SolutionKmeans.hpp"
-//#include "SolutionKmeansPartialDims.hpp"
 #include "SolutionRandomKD.hpp"
 
 
@@ -56,7 +55,8 @@ int main(int argc, char **argv) {
 
   // Knng constuction
   vector<vector<uint32_t>> knng(numPoints);
-  SolutionKmeans::constructResult(points, numPoints, knng);
+//  SolutionRandomKD::constructResult(points, numPoints, knng);
+    SolutionKmeans::constructResult(points, numPoints, knng);
 
   // Save to ouput.bin
   auto startSave = hclock::now();
