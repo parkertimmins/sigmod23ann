@@ -572,24 +572,34 @@ struct SolutionKmeans {
             auto coefs = sub(center1, between);
             auto offset = dot(between.data(), coefs.data());
 
+            tbb::combinable<vector<float>> dotsAgg(vector<float>(rangeSize, 0));
+            tbb::parallel_for(
+                tbb::blocked_range<uint32_t>(0, 100),
+                [&](tbb::blocked_range<uint32_t> r) {
+                    auto& dotsLocal = dotsAgg.local();
+                    for (uint32_t c = r.begin(); c < r.end(); ++c) {
+                        for (uint32_t i = range.first; i < range.second; ++i) {
+                            auto id = indices[i];
+                            dotsLocal[i-range.first] += pointsCol[numPoints * c + id] * coefs[c];
+                        }
+                    }
+                }
+            );
+            auto dots = dotsAgg.combine([&](const vector<float>& x, const vector<float>& y) {
+                vector<float> res(rangeSize);
+                for (uint32_t i = 0; i < rangeSize; ++i) { res[i] = x[i] + y[i]; }
+                return res;
+            });
+
             using groups = pair<vector<uint32_t>, vector<uint32_t>>;
             tbb::combinable<groups> groupsAgg(make_pair<>(vector<uint32_t>(), vector<uint32_t>()));
             tbb::parallel_for(
                 tbb::blocked_range<uint32_t>(range.first, range.second),
                 [&](tbb::blocked_range<uint32_t> r) {
-                    vector<float> dots(r.size(), 0);
-                    for (uint32_t c = 0; c < 100; ++c) {
-                        for (uint32_t i = 0; i < r.size(); ++i) {
-                            auto id = indices[i + r.begin()];
-                            dots[i] += pointsCol[numPoints * c + id] * coefs[c];
-                        }
-                    }
-
                     auto& [g1, g2] = groupsAgg.local();
-                    for (uint32_t i = 0; i < r.size(); ++i) {
-                        auto id = indices[i + r.begin()];
-                        auto& pt = points[id];
-                        auto& group = dots[i] >= offset ? g1 : g2;
+                    for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                        auto id = indices[i];
+                        auto& group = dots[i-range.first] >= offset ? g1 : g2;
                         group.push_back(id);
                     }
                 }
