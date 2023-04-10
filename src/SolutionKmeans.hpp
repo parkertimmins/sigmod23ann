@@ -50,7 +50,7 @@ struct SolutionKmeans {
 
     static float calcSamplePercent(uint32_t min, uint32_t max) {
         uint32_t rangeSize = max - min;
-        return pow(log(rangeSize) / log(30), 7) / rangeSize; // 0.005 for 1e7, around 10% for 10k
+        return pow(log(rangeSize) / log(30), 6) / rangeSize; // 0.005 for 1e7, around 10% for 10k
     }
 
     static vector<uint32_t> getSampleFromPercent(float perc, uint32_t min, uint32_t max) {
