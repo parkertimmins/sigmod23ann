@@ -512,7 +512,7 @@ struct SolutionKmeans {
 
             splitKmeansBinary(lo, knnIterations, maxGroupSize, points, pointsCopy, pointsCol, indices, ranges, false, depth + 1, numPoints);
             splitKmeansBinary(hi, knnIterations, maxGroupSize, points, pointsCopy, pointsCol, indices, ranges, false, depth + 1, numPoints);
-        } else if (depth < 6) {
+        } else if (4 <= depth && depth <= 8) {
             auto startDepth = hclock::now();
 
             // get range sample
