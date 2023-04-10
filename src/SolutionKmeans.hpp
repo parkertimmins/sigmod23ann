@@ -313,7 +313,7 @@ struct SolutionKmeans {
         }
     }
 
-    inline static vector<long> depthTimes;
+    inline static std::atomic<long> depthTimes[50];
 
     static vector<pair<float, uint32_t>> getSortedIndices(Vec& v) {
         vector<pair<float, uint32_t>> with_idx;
@@ -1034,7 +1034,7 @@ struct SolutionKmeans {
 
             std::iota(indices.begin(), indices.end(), 0);
 
-            depthTimes.clear(); depthTimes.resize(50, 0); // should never need depth 100!
+            for (auto& depthTime : depthTimes) { depthTime = 0; }
 
             auto startGroup = hclock::now();
             splitKmeansBinary({0, numPoints}, 1, 400, points, pointsCopy, pointsCol, indices, ranges, true, 0, numPoints);
@@ -1063,7 +1063,7 @@ struct SolutionKmeans {
 
             iteration++;
 
-            for (uint32_t d = 0; d < depthTimes.size(); ++d) {
+            for (uint32_t d = 0; d < 50; ++d) {
                 if (depthTimes[d] > 0) {
                     std::cout << "depth " << d << " time: " << depthTimes[d] << "\n";
                 }
