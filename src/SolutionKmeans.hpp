@@ -1028,8 +1028,8 @@ struct SolutionKmeans {
 
         tbb::concurrent_vector<Range> ranges;
         uint32_t iteration = 0;
-        while (iteration < 10) {
-//        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
+//        while (iteration < 10) {
+        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
             std::cout << "Iteration: " << iteration << '\n';
 
             std::iota(indices.begin(), indices.end(), 0);
@@ -1037,7 +1037,7 @@ struct SolutionKmeans {
             for (auto& depthTime : depthTimes) { depthTime = 0; }
 
             auto startGroup = hclock::now();
-            splitKmeansBinary({0, numPoints}, 1, 400, points, pointsCopy, pointsCol, indices, ranges, true, 0, numPoints);
+            splitKmeansBinary({0, numPoints}, 2, 400, points, pointsCopy, pointsCol, indices, ranges, true, 0, numPoints);
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
 
             std::cout << "num ranges: " << ranges.size() << "\n";
