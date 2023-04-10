@@ -49,14 +49,6 @@ float dotPartial(vector<uint32_t>& dimensions, const float* lhs, const float* rh
 
 
 
-float distance(uint32_t numDims, const float* lhs, const float* rhs) {
-    float sum = 0;
-    for (uint32_t i = 0; i < numDims; ++i) {
-        float diff = lhs[i] - rhs[i];
-        sum += diff * diff;
-    }
-    return sum;
-}
 
 float distance(const float* lhs, const float* rhs) {
     __m256 sum  = _mm256_set1_ps(0);
@@ -167,33 +159,6 @@ Vec scalarMult(float c, const Vec& vec) {
     }
     return res;
 }
-
-vector<float> sub(const vector<float>& lhs, const vector<float>& rhs) {
-    auto dim = lhs.size();
-    vector<float> result(dim);
-    for (uint32_t i = 0; i < dim; i++) {
-        result[i]  = lhs[i] - rhs[i];
-    }
-    return result;
-}
-
-vector<float> scalarMult(float c, const vector<float>& vec) {
-    vector<float> res;
-    for (float v : vec) {
-        res.push_back(c * v);
-    }
-    return res;
-}
-
-vector<float> add(const vector<float>& lhs, const vector<float>& rhs) {
-    auto dim = lhs.size();
-    vector<float> result(dim);
-    for (uint32_t i = 0; i < dim; i++) {
-        result[i]  = lhs[i] + rhs[i];
-    }
-    return result;
-}
-
 //
 //float dot(vector<std::pair<float, uint32_t>>& sparse, float* dense) {
 //    float total = 0;
@@ -211,13 +176,6 @@ vector<float> add(const vector<float>& lhs, const vector<float>& rhs) {
 //    return total;
 //}
 
-float dot(uint32_t numDims, const float* lhs, const float* rhs) {
-    float res = 0;
-    for (uint32_t i = 0; i < numDims; ++i) {
-        res += lhs[i] * rhs[i];
-    }
-    return res;
-}
 float dot(const float* lhs, const float* rhs) {
     __m256 sum  = _mm256_set1_ps(0);
     auto* r = rhs;
