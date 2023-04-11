@@ -50,7 +50,7 @@ struct SolutionKmeans {
 
     static float calcSamplePercent(uint32_t min, uint32_t max) {
         uint32_t rangeSize = max - min;
-        return pow(log(rangeSize) / log(30), 6) / rangeSize; // 0.005 for 1e7, around 10% for 10k
+        return pow(log(rangeSize) / log(30), 7) / rangeSize; // 0.005 for 1e7, around 10% for 10k
     }
 
     static vector<uint32_t> getSampleFromPercent(float perc, uint32_t min, uint32_t max) {
@@ -1037,7 +1037,7 @@ struct SolutionKmeans {
             for (auto& depthTime : depthTimes) { depthTime = 0; }
 
             auto startGroup = hclock::now();
-            splitKmeansBinary({0, numPoints}, 2, 400, points, pointsCopy, pointsCol, indices, ranges, true, 0, numPoints);
+            splitKmeansBinary({0, numPoints}, 1, 400, points, pointsCopy, pointsCol, indices, ranges, true, 0, numPoints);
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
 
             std::cout << "num ranges: " << ranges.size() << "\n";
