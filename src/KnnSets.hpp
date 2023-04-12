@@ -305,22 +305,22 @@ void addCandidatesCopy(
 void addCandidatesLessThan(
                    float points[][112],
                    float pointsCopy[][112],
-                   vector<pair<uint32_t, uint32_t>>& indices,
+                   vector<uint32_t>& indices,
                    Range range,
                    vector<float>& bounds,
                    vector<KnnSetScannableSimd>& idToKnn) {
 
     for (uint32_t i=range.first; i < range.second; ++i) {
-        std::memcpy(pointsCopy[i], points[indices[i].first], 100 * sizeof(float));
+        std::memcpy(pointsCopy[i], points[indices[i]], 100 * sizeof(float));
     }
     for (uint32_t i=range.first; i < range.second-1; ++i) {
-        auto id1 = indices[i].first;
+        auto id1 = indices[i];
         auto& knn1 = idToKnn[id1];
         auto& bound1 = bounds[id1];
         for (uint32_t j=i+1; j < range.second; ++j) {
             float dist = distance(pointsCopy[i], pointsCopy[j]);
 
-            auto id2 = indices[j].first;
+            auto id2 = indices[j];
             auto& knn2 = idToKnn[id2];
             auto& bound2 = bounds[id2];
             if (dist < bound1) {
