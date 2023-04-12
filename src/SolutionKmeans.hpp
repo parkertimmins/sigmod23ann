@@ -746,6 +746,7 @@ struct SolutionKmeans {
             vector<KnnSetScannableSimd>& idToKnn) {
 
         uint32_t numThreads = std::thread::hardware_concurrency();
+        auto ranges = splitRange({0, numPoints}, numThreads);
         stage1 = 0;
         stage2 = 0;
         stage3 = 0;
@@ -796,14 +797,14 @@ struct SolutionKmeans {
                 auto s3 = hclock::now();
                 using centroid_agg = pair<uint32_t, vector<float>>;
                 using group_center_agg = tsl::robin_map<uint32_t, pair<centroid_agg, centroid_agg>>;
-                tbb::combinable<group_center_agg> agg;
-                tbb::parallel_for(
-                    tbb::blocked_range<size_t>(0, numPoints),
-                    [&](oneapi::tbb::blocked_range<size_t> r) {
-                        auto& center_agg = agg.local();
+                vector<group_center_agg> localGroupCenterAggs(ranges.size());
+                vector<std::thread> threads;
+                for (uint32_t t = 0; t < numThreads; ++t) {
+                    threads.emplace_back([&, t]() {
+                        auto range = ranges[t];
                         std::uniform_real_distribution<float> sampleDist(0, 1);
-
-                        for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                        auto& center_agg = localGroupCenterAggs[t];
+                        for (uint32_t i = range.first; i < range.second; ++i) {
                             // !could result in some groups never getting sampled!
                             if (sampleDist(rd) < sampleRate) {
                                 auto grp = id_to_group[i];
@@ -820,20 +821,21 @@ struct SolutionKmeans {
                                 plusEq(aggToUse.second.data(), pt);
                             }
                         }
-                    }
-                );
+                    });
+                }
+                for (auto& thread: threads) { thread.join(); }
                 stage3 += duration_cast<milliseconds>(hclock::now() - s3).count();
+
 
                 // aggregate local results for split plane assignment
                 auto s4 = hclock::now();
-                auto per_group_center_aggs = agg.combine([](const group_center_agg& x, const group_center_agg& y) {
-                    group_center_agg res;
-                    res.insert(x.begin(), x.end());
-                    for (auto& [grp, ca] : y) {
-                        if (res.find(grp) == res.end()) {
-                            res[grp] = ca;
+                group_center_agg globalCenterAggs;
+                for (auto& local : localGroupCenterAggs) {
+                    for (auto& [grp, ca] : local) {
+                        if (globalCenterAggs.find(grp) == globalCenterAggs.end()) {
+                            globalCenterAggs[grp] = ca;
                         } else {
-                            auto& [c1, c2] = res[grp];
+                            auto& [c1, c2] = globalCenterAggs[grp];
                             c1.first += ca.first.first;
                             c2.first += ca.second.first;
                             for (uint32_t j = 0; j < dims; ++j) {
@@ -842,12 +844,11 @@ struct SolutionKmeans {
                             }
                         }
                     }
-                    return res;
-                });
+                }
                 stage4 += duration_cast<milliseconds>(hclock::now() - s4).count();
 
                 auto s5 = hclock::now();
-                for (auto& [grp, center_aggs] : per_group_center_aggs)  {
+                for (auto& [grp, center_aggs] : globalCenterAggs)  {
                     auto& [center1, center2] = groupCenters[grp];
                     auto& [c1_agg, c2_agg] = center_aggs;
                     for (uint32_t i = 0; i < dims; ++i) {
@@ -864,7 +865,6 @@ struct SolutionKmeans {
 
             // recompute groups based on plane
             auto s6 = hclock::now();
-            auto ranges = splitRange({0, numPoints}, numThreads);
             vector<std::thread> threads;
             for (uint32_t t = 0; t < numThreads; ++t) {
                 threads.emplace_back([&, t]() {
@@ -883,7 +883,6 @@ struct SolutionKmeans {
         // convert id->grpId into grpId -> {id}
         auto s7 = hclock::now();
         using grp_to_ids = tsl::robin_map<uint32_t, vector<uint32_t>>;
-        auto ranges = splitRange({0, numPoints}, numThreads);
         vector<grp_to_ids> localGrpToIds(ranges.size());
         vector<std::thread> threads;
         for (uint32_t t = 0; t < numThreads; ++t) {
