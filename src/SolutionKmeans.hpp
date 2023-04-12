@@ -732,9 +732,9 @@ struct SolutionKmeans {
             for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
 
                 uint32_t expGroupsAtDepth = 1 << depth;
-                uint32_t expGroupsSize = numPoints / expGroupsAtDepth;
-                float sampleRate = calcSamplePercent(0, expGroupsAtDepth);
-                std::cout << "depth: " << depth << ", exp groups: " << expGroupsAtDepth << ", exp group size: " << expGroupsSize << ", sample rate: " << sampleRate << "\n";
+                uint32_t expGroupSize = numPoints / expGroupsAtDepth;
+                float sampleRate = calcSamplePercent(0, expGroupSize);
+                std::cout << "depth: " << depth << ", exp groups: " << expGroupsAtDepth << ", exp group size: " << expGroupSize << ", sample rate: " << sampleRate << "\n";
 
 
                 // assign points to either side of splits planes
