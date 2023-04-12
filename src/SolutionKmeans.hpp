@@ -641,15 +641,18 @@ struct SolutionKmeans {
     static tsl::robin_map<uint32_t, pair<uint32_t, vector<uint32_t>>> getPerGroupsSample(uint32_t numPoints,
                                                                                          vector<uint32_t>& id_to_group) {
 
+        uint32_t numThreads = std::thread::hardware_concurrency();
+        auto ranges = splitRange({0, numPoints}, numThreads);
         static uint32_t resSize = 2;
         using group_reservoirs = tsl::robin_map<uint32_t, pair<uint32_t, vector<uint32_t>>>;
 
-        tbb::combinable<group_reservoirs> combinableGrpReservoirs;
-        tbb::parallel_for(
-            tbb::blocked_range<size_t>(0, numPoints),
-            [&](oneapi::tbb::blocked_range<size_t> r) {
-                auto& localReservoirs = combinableGrpReservoirs.local();
-                for (uint32_t i = r.begin(); i < r.end(); ++i) {
+        vector<group_reservoirs> localGroupReservoirs(ranges.size());
+        vector<std::thread> threads;
+        for (uint32_t t = 0; t < numThreads; ++t) {
+            threads.emplace_back([&, t]() {
+                auto r = ranges[t];
+                auto& localReservoirs = localGroupReservoirs[t];
+                for (uint32_t i = r.first; i < r.second; ++i) {
                     uint32_t grp = id_to_group[i];
                     if (localReservoirs.find(grp) == localReservoirs.end()) {
                         localReservoirs[grp] = {0, vector<uint32_t>()};
@@ -666,19 +669,19 @@ struct SolutionKmeans {
                     }
                     numSeen++;
                 }
-            }
-        );
+            });
+        }
+        for (auto& thread: threads) { thread.join(); }
 
-        auto reservoirs = combinableGrpReservoirs.combine([](const group_reservoirs& gr1, const group_reservoirs& gr2) {
-            group_reservoirs res;
-
-            for (auto& [grp, resSet1] : gr1) {
-                auto it2 = gr2.find(grp);
-                if (it2 == gr2.end()) {
-                    res[grp] = resSet1;
+        group_reservoirs global;
+        for (auto& local : localGroupReservoirs) {
+            for (auto& [grp, resSet1] : local) {
+                auto it = global.find(grp);
+                if (it == global.end()) {
+                    global[grp] = resSet1;
                 } else {
                     auto& [numSeen1, res1] = resSet1;
-                    auto& [numSeen2, res2] = it2->second;
+                    auto& [numSeen2, res2] = it->second;
 
                     vector<uint32_t> options;
                     options.reserve(res1.size() + res2.size());
@@ -702,18 +705,11 @@ struct SolutionKmeans {
                         options.erase(options.begin() + idx);
                         weights.erase(weights.begin() + idx);
                     }
-                    res[grp] = {numSeen1 + numSeen2, result_res};
+                    global[grp] = {numSeen1 + numSeen2, result_res};
                 }
             }
-            for (auto& [grp, resSet2] : gr2) {
-                if (gr1.find(grp) == gr1.end()) {
-                    res[grp] = resSet2;
-                }
-            }
-            return res;
-        });
-
-        return reservoirs;
+        }
+        return global;
     }
 
     static uint32_t requiredHashFuncs(uint32_t numPoints, uint32_t maxBucketSize) {
