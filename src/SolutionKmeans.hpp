@@ -640,25 +640,79 @@ struct SolutionKmeans {
 
     static tsl::robin_map<uint32_t, pair<uint32_t, vector<uint32_t>>> getPerGroupsSample(uint32_t numPoints,
                                                                                          vector<uint32_t>& id_to_group) {
+
         static uint32_t resSize = 2;
-        tsl::robin_map<uint32_t, pair<uint32_t, vector<uint32_t>>> reservoirs;
-        for (uint32_t i = 0; i < numPoints; ++i) {
-            uint32_t grp = id_to_group[i];
-            if (reservoirs.find(grp) == reservoirs.end()) {
-                reservoirs[grp] = {0, vector<uint32_t>()};
-            }
-            auto &[numSeen, reservoir] = reservoirs[grp];
-            if (reservoir.size() < resSize) {
-                reservoir.push_back(i);
-            } else {
-                std::uniform_int_distribution<uint32_t> distribution(0, numSeen);
-                uint32_t j = distribution(rd);
-                if (j < resSize) {
-                    reservoir[j] = i;
+        using group_reservoirs = tsl::robin_map<uint32_t, pair<uint32_t, vector<uint32_t>>>;
+
+        tbb::combinable<group_reservoirs> combinableGrpReservoirs;
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, numPoints),
+            [&](oneapi::tbb::blocked_range<size_t> r) {
+                auto& localReservoirs = combinableGrpReservoirs.local();
+                for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                    uint32_t grp = id_to_group[i];
+                    if (localReservoirs.find(grp) == localReservoirs.end()) {
+                        localReservoirs[grp] = {0, vector<uint32_t>()};
+                    }
+                    auto& [numSeen, reservoir] = localReservoirs[grp];
+                    if (reservoir.size() < resSize) {
+                        reservoir.push_back(i);
+                    } else {
+                        std::uniform_int_distribution<uint32_t> distribution(0, numSeen);
+                        uint32_t j = distribution(rd);
+                        if (j < resSize) {
+                            reservoir[j] = i;
+                        }
+                    }
+                    numSeen++;
                 }
             }
-            numSeen++;
-        }
+        );
+
+        auto reservoirs = combinableGrpReservoirs.combine([](const group_reservoirs& gr1, const group_reservoirs& gr2) {
+            group_reservoirs res;
+
+            for (auto& [grp, resSet1] : gr1) {
+                auto it2 = gr2.find(grp);
+                if (it2 == gr2.end()) {
+                    res[grp] = resSet1;
+                } else {
+                    auto& [numSeen1, res1] = resSet1;
+                    auto& [numSeen2, res2] = it2->second;
+
+                    vector<uint32_t> options;
+                    options.reserve(res1.size() + res2.size());
+                    vector<uint32_t> weights;
+                    weights.reserve(res1.size() + res2.size());
+                    for (auto& a1 : res1) {
+                        options.push_back(a1);
+                        weights.push_back(numSeen1);
+                    }
+                    for (auto& a2 : res2) {
+                        options.push_back(a2);
+                        weights.push_back(numSeen2);
+                    }
+
+                    vector<uint32_t> result_res;
+                    result_res.reserve(res1.size());
+                    while (result_res.size() < res1.size()) {
+                        std::discrete_distribution<uint32_t> dist(weights.begin(), weights.end());
+                        uint32_t idx = dist(rd);
+                        result_res.push_back(options[idx]);
+                        options.erase(options.begin() + idx);
+                        weights.erase(weights.begin() + idx);
+                    }
+                    res[grp] = {numSeen1 + numSeen2, result_res};
+                }
+            }
+            for (auto& [grp, resSet2] : gr2) {
+                if (gr1.find(grp) == gr1.end()) {
+                    res[grp] = resSet2;
+                }
+            }
+            return res;
+        });
+
         return reservoirs;
     }
 
@@ -734,7 +788,7 @@ struct SolutionKmeans {
                 uint32_t expGroupsAtDepth = 1 << depth;
                 uint32_t expGroupSize = numPoints / expGroupsAtDepth;
                 float sampleRate = calcSamplePercent(0, expGroupSize);
-                std::cout << "depth: " << depth << ", exp groups: " << expGroupsAtDepth << ", exp group size: " << expGroupSize << ", sample rate: " << sampleRate << "\n";
+//                std::cout << "depth: " << depth << ", exp groups: " << expGroupsAtDepth << ", exp group size: " << expGroupSize << ", sample rate: " << sampleRate << "\n";
 
 
                 // assign points to either side of splits planes
