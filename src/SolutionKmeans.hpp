@@ -861,6 +861,7 @@ struct SolutionKmeans {
                 stage5 += duration_cast<milliseconds>(hclock::now() - s5).count();
             }
 
+            // recompute groups based on plane
             auto s6 = hclock::now();
             tbb::parallel_for(
                 tbb::blocked_range<uint32_t>(0, numPoints),
@@ -875,41 +876,49 @@ struct SolutionKmeans {
             stage6 += duration_cast<milliseconds>(hclock::now() - s6).count();
         }
 
+        // convert id->grpId into grpId -> {id}
+        using grp_to_ids = tsl::robin_map<uint32_t, vector<uint32_t>>;
+        uint32_t numThreads = std::thread::hardware_concurrency();
+        auto ranges = splitRange({0, numPoints}, numThreads);
+
         auto s7 = hclock::now();
-        using grp_to_group = tsl::robin_map<uint32_t, vector<uint32_t>>;
-        tbb::combinable<grp_to_group> final_groups;
-        tbb::parallel_for(
-            tbb::blocked_range<uint32_t>(0, numPoints),
-            [&](tbb::blocked_range<uint32_t> r) {
-                auto& local_final_groups = final_groups.local();
-                for (uint32_t i = r.begin(); i < r.end(); ++i) {
+        vector<grp_to_ids> localGrpToIds(ranges.size());
+        vector<std::thread> threads;
+        for (uint32_t t = 0; t < numThreads; ++t) {
+            threads.emplace_back([&, t]() {
+                auto& local = localGrpToIds[t];
+                auto range = ranges[t];
+                for (uint32_t i = range.first; i < range.second; ++i) {
                     uint32_t grp = id_to_group[i];
-                    if (local_final_groups.find(grp) == local_final_groups.end()) {
-                        local_final_groups[grp] = vector<uint32_t>();
+                    if (local.find(grp) == local.end()) {
+                        local[grp] = vector<uint32_t>();
                     }
-                    local_final_groups[grp].push_back(i);
+                    local[grp].push_back(i);
                 }
-            }
-        );
-        auto final = final_groups.combine([](const grp_to_group& x, const grp_to_group& y) {
-            grp_to_group res;
-            for (auto& [grp, group] : x) { res[grp] = group; }
-            for (auto& [grp, group_y] : y) {
-                if (res.find(grp) == res.end()) {
-                    res[grp] = group_y;
-                } else {
-                    auto& group_x = res[grp];
-                    group_x.insert(group_x.end(), group_y.begin(), group_y.end());
-                }
-            }
-            return res;
-        });
+            });
+        }
+        for (auto& thread: threads) { thread.join(); }
         stage7 += duration_cast<milliseconds>(hclock::now() - s7).count();
 
         auto s8 = hclock::now();
+        grp_to_ids globalGrpToIds;
+        for (auto& local : localGrpToIds) {
+            for (auto& [grp, idsLocal] : local) {
+                if (globalGrpToIds.find(grp) == globalGrpToIds.end()) {
+                    globalGrpToIds[grp] = idsLocal;
+                } else {
+                    auto& ids = globalGrpToIds[grp];
+                    ids.insert(ids.end(), idsLocal.begin(), idsLocal.end());
+                }
+            }
+        }
+        stage8 += duration_cast<milliseconds>(hclock::now() - s8).count();
+
+
+
         vector<vector<uint32_t>> groups;
-        groups.reserve(final.size());
-        for (auto& [id, group] : final) {
+        groups.reserve(globalGrpToIds.size());
+        for (auto& [id, group] : globalGrpToIds) {
             if (group.size() < 10'000) {
                 groups.push_back(group);
             } else {
@@ -917,15 +926,14 @@ struct SolutionKmeans {
             }
         }
         std::cout << "num groups: " << groups.size() << "\n";
-        final.clear();
-        stage8 += duration_cast<milliseconds>(hclock::now() - s8).count();
+        globalGrpToIds.clear();
 
         auto s9 = hclock::now();
         tbb::parallel_for(
             tbb::blocked_range<uint32_t>(0, groups.size()),
             [&](tbb::blocked_range<uint32_t> r) {
                 for (uint32_t i = r.begin(); i < r.end(); ++i) {
-                    addCandidatesGroup(points, groups[i], idToKnn);
+//                    addCandidatesGroup(points, groups[i], idToKnn);
                 }
             }
         );
