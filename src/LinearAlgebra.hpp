@@ -74,16 +74,7 @@ float distance(const float* lhs, const float* rhs) {
 }
 
 void plusEq(float* lhs, float* rhs) {
-    auto* l = lhs;
-    auto* r = rhs;
-    for (uint32_t i = 0; i < 96; i+=8) {
-        __m256 rs = _mm256_loadu_ps(r);
-        __m256 ls = _mm256_loadu_ps(l);
-        _mm256_storeu_ps(l, _mm256_add_ps(ls, rs));
-        r += 8;
-        l += 8;
-    }
-    for (uint32_t i = 96; i < 100; ++i) {
+    for (uint32_t i = 0; i < 100; ++i) {
         lhs[i] += rhs[i];
     }
 }
