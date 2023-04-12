@@ -73,7 +73,7 @@ float distance(const float* lhs, const float* rhs) {
     return ans;
 }
 
-void plusEq(float* lhs, float* rhs) {
+void plusEq(float* lhs, const float* rhs) {
     for (uint32_t i = 0; i < 100; ++i) {
         lhs[i] += rhs[i];
     }

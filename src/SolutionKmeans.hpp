@@ -741,19 +741,24 @@ struct SolutionKmeans {
                     tbb::blocked_range<size_t>(0, numPoints),
                     [&](oneapi::tbb::blocked_range<size_t> r) {
                         auto& center_agg = agg.local();
+                        std::uniform_real_distribution<float> sampleDist(0, 1);
+                        float sampleRate = 0.1;
                         for (uint32_t i = r.begin(); i < r.end(); ++i) {
-                            auto grp = id_to_group[i];
-                            auto& [offset, coefs] = groupPlane[grp];
+                            // !could result in some groups never getting sampled!
+                            if (sampleDist(rd) < sampleRate) {
+                                auto grp = id_to_group[i];
+                                auto& [offset, coefs] = groupPlane[grp];
 
-                            if (center_agg.find(grp) == center_agg.end()) {
-                                center_agg[grp] = { { 0, vector<float>(100, 0.0f) }, { 0, vector<float>(100, 0.0f) } };
+                                if (center_agg.find(grp) == center_agg.end()) {
+                                    center_agg[grp] = { { 0, vector<float>(100, 0.0f) }, { 0, vector<float>(100, 0.0f) } };
+                                }
+
+                                auto& pt = points[i];
+                                auto& [agg1, agg2] = center_agg[grp];
+                                auto& aggToUse = dot(coefs.data(), pt) >= offset ? agg1 : agg2;
+                                aggToUse.first++;
+                                plusEq(aggToUse.second.data(), pt);
                             }
-
-                            auto& pt = points[i];
-                            auto& [agg1, agg2] = center_agg[grp];
-                            auto& aggToUse = dot(coefs.data(), points[i]) >= offset ? agg1 : agg2;
-                            aggToUse.first++;
-                            plusEq(aggToUse.second.data(), pt);
                         }
                     }
                 );
