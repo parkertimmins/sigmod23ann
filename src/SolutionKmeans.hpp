@@ -745,6 +745,7 @@ struct SolutionKmeans {
             float points[][112],
             vector<KnnSetScannableSimd>& idToKnn) {
 
+        uint32_t numThreads = std::thread::hardware_concurrency();
         stage1 = 0;
         stage2 = 0;
         stage3 = 0;
@@ -863,25 +864,26 @@ struct SolutionKmeans {
 
             // recompute groups based on plane
             auto s6 = hclock::now();
-            tbb::parallel_for(
-                tbb::blocked_range<uint32_t>(0, numPoints),
-                [&](tbb::blocked_range<uint32_t> r) {
-                    for (uint32_t i = r.begin(); i < r.end(); ++i) {
+            auto ranges = splitRange({0, numPoints}, numThreads);
+            vector<std::thread> threads;
+            for (uint32_t t = 0; t < numThreads; ++t) {
+                threads.emplace_back([&, t]() {
+                    auto range = ranges[t];
+                    for (uint32_t i = range.first; i < range.second; ++i) {
                         uint32_t grp = id_to_group[i];
                         auto& [offset, coefs] = groupPlane[grp];
                         id_to_group[i] = dot(coefs.data(), points[i]) >= offset ? 2 * grp : 2 * grp + 1;
                     }
-                }
-            );
+                });
+            }
+            for (auto& thread: threads) { thread.join(); }
             stage6 += duration_cast<milliseconds>(hclock::now() - s6).count();
         }
 
         // convert id->grpId into grpId -> {id}
-        using grp_to_ids = tsl::robin_map<uint32_t, vector<uint32_t>>;
-        uint32_t numThreads = std::thread::hardware_concurrency();
-        auto ranges = splitRange({0, numPoints}, numThreads);
-
         auto s7 = hclock::now();
+        using grp_to_ids = tsl::robin_map<uint32_t, vector<uint32_t>>;
+        auto ranges = splitRange({0, numPoints}, numThreads);
         vector<grp_to_ids> localGrpToIds(ranges.size());
         vector<std::thread> threads;
         for (uint32_t t = 0; t < numThreads; ++t) {
@@ -913,8 +915,6 @@ struct SolutionKmeans {
             }
         }
         stage8 += duration_cast<milliseconds>(hclock::now() - s8).count();
-
-
 
         vector<vector<uint32_t>> groups;
         groups.reserve(globalGrpToIds.size());
