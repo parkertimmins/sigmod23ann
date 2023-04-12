@@ -933,7 +933,7 @@ struct SolutionKmeans {
             tbb::blocked_range<uint32_t>(0, groups.size()),
             [&](tbb::blocked_range<uint32_t> r) {
                 for (uint32_t i = r.begin(); i < r.end(); ++i) {
-//                    addCandidatesGroup(points, groups[i], idToKnn);
+                    addCandidatesGroup(points, groups[i], idToKnn);
                 }
             }
         );
