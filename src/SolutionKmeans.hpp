@@ -682,6 +682,7 @@ struct SolutionKmeans {
     inline static long stage8 = 0;
     inline static long stage9 = 0;
 
+
     // handle both point vector data and array data
     static void splitKmeansNonRec(
             uint32_t numPoints,
@@ -752,7 +753,7 @@ struct SolutionKmeans {
                             auto& [agg1, agg2] = center_agg[grp];
                             auto& aggToUse = dot(coefs.data(), points[i]) >= offset ? agg1 : agg2;
                             aggToUse.first++;
-                            for (uint32_t j = 0; j < dims; ++j) { aggToUse.second[j] += pt[j]; }
+                            plusEq(aggToUse.second.data(), pt);
                         }
                     }
                 );

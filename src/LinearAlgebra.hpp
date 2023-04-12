@@ -47,8 +47,6 @@ float dotPartial(vector<uint32_t>& dimensions, const float* lhs, const float* rh
 
 
 
-
-
 float distance(const float* lhs, const float* rhs) {
     __m256 sum  = _mm256_set1_ps(0);
     auto* r = rhs;
@@ -74,6 +72,22 @@ float distance(const float* lhs, const float* rhs) {
     }
     return ans;
 }
+
+void plusEq(float* lhs, float* rhs) {
+    auto* l = lhs;
+    auto* r = rhs;
+    for (uint32_t i = 0; i < 96; i+=8) {
+        __m256 rs = _mm256_loadu_ps(r);
+        __m256 ls = _mm256_loadu_ps(l);
+        _mm256_storeu_ps(l, _mm256_add_ps(ls, rs));
+        r += 8;
+        l += 8;
+    }
+    for (uint32_t i = 96; i < 100; ++i) {
+        lhs[i] += rhs[i];
+    }
+}
+
 
 double norm(const Vec& vec) {
     float sumSquares = 0.0;
@@ -113,12 +127,8 @@ Vec randUniformUnitVec(size_t dim=dims) {
     normalizeInPlace(randVec);
     return randVec;
 }
+
 void plusEq(Vec& lhs, const Vec& rhs) {
-    for (uint32_t i = 0; i < 100; ++i) {
-        lhs[i] += rhs[i];
-    }
-}
-void plusEq(float* lhs, float* rhs) {
     for (uint32_t i = 0; i < 100; ++i) {
         lhs[i] += rhs[i];
     }
