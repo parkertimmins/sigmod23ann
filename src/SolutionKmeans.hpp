@@ -690,7 +690,6 @@ struct SolutionKmeans {
             float points[][112],
             vector<KnnSetScannableSimd>& idToKnn) {
 
-
         stage1 = 0;
         stage2 = 0;
         stage3 = 0;
@@ -701,17 +700,18 @@ struct SolutionKmeans {
         stage8 = 0;
         stage9 = 0;
 
-
         vector<uint32_t> id_to_group(numPoints, 1);
         uint32_t depth = requiredHashFuncs(numPoints, maxGroupSize);
         uint32_t d = 0;
         while (d++ < depth) {
+
+            // Get samples for initial centers
             auto s1 = hclock::now();
             auto perGroupSamples = getPerGroupsSample(numPoints, id_to_group);
             stage1 += duration_cast<milliseconds>(hclock::now() - s1).count();
 
+            // get centers and split plane from samples
             auto s2 = hclock::now();
-            // build centers;
             tsl::robin_map<uint32_t, pair<Vec, Vec>> groupCenters;
             tsl::robin_map<uint32_t, pair<float, Vec>> groupPlane;
             for (auto& [grp, countSample] : perGroupSamples) {
@@ -731,8 +731,9 @@ struct SolutionKmeans {
 
             for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
 
+                // assign points to either side of splits planes
                 auto s3 = hclock::now();
-                using centroid_agg = pair<uint32_t, vector<double>>;
+                using centroid_agg = pair<uint32_t, vector<float>>;
                 using group_center_agg = tsl::robin_map<uint32_t, pair<centroid_agg, centroid_agg>>;
                 tbb::combinable<group_center_agg> agg;
                 tbb::parallel_for(
@@ -744,7 +745,7 @@ struct SolutionKmeans {
                             auto& [offset, coefs] = groupPlane[grp];
 
                             if (center_agg.find(grp) == center_agg.end()) {
-                                center_agg[grp] = { { 0, vector<double>(100, 0.0f) }, { 0, vector<double>(100, 0.0f) } };
+                                center_agg[grp] = { { 0, vector<float>(100, 0.0f) }, { 0, vector<float>(100, 0.0f) } };
                             }
 
                             auto& pt = points[i];
@@ -757,6 +758,7 @@ struct SolutionKmeans {
                 );
                 stage3 += duration_cast<milliseconds>(hclock::now() - s3).count();
 
+                // aggregate local results for split plane assignment
                 auto s4 = hclock::now();
                 auto per_group_center_aggs = agg.combine([](const group_center_agg& x, const group_center_agg& y) {
                     group_center_agg res;
