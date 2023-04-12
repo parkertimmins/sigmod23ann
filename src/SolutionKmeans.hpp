@@ -702,9 +702,8 @@ struct SolutionKmeans {
         stage9 = 0;
 
         vector<uint32_t> id_to_group(numPoints, 1);
-        uint32_t depth = requiredHashFuncs(numPoints, maxGroupSize);
-        uint32_t d = 0;
-        while (d++ < depth) {
+        uint32_t maxDepth = requiredHashFuncs(numPoints, maxGroupSize);
+        for (uint32_t depth = 0; depth < maxDepth; ++depth) {
 
             // Get samples for initial centers
             auto s1 = hclock::now();
@@ -732,6 +731,12 @@ struct SolutionKmeans {
 
             for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
 
+                uint32_t expGroupsAtDepth = 1 << depth;
+                uint32_t expGroupsSize = numPoints / expGroupsAtDepth;
+                float sampleRate = calcSamplePercent(0, expGroupsAtDepth);
+                std::cout << "depth: " << depth << ", exp groups: " << expGroupsAtDepth << ", exp group size: " << expGroupsSize << ", sample rate: " << sampleRate << "\n";
+
+
                 // assign points to either side of splits planes
                 auto s3 = hclock::now();
                 using centroid_agg = pair<uint32_t, vector<float>>;
@@ -742,7 +747,7 @@ struct SolutionKmeans {
                     [&](oneapi::tbb::blocked_range<size_t> r) {
                         auto& center_agg = agg.local();
                         std::uniform_real_distribution<float> sampleDist(0, 1);
-                        float sampleRate = 0.1;
+
                         for (uint32_t i = r.begin(); i < r.end(); ++i) {
                             // !could result in some groups never getting sampled!
                             if (sampleDist(rd) < sampleRate) {
