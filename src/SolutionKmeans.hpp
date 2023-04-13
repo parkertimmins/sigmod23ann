@@ -51,18 +51,6 @@ struct SolutionKmeans {
         return pow(log(rangeSize) / log(30), 7) / rangeSize; // 0.005 for 1e7, around 10% for 10k
     }
 
-    static vector<uint32_t> getSampleFromPercent(float perc, uint32_t min, uint32_t max) {
-        uint32_t rangeSize = max - min;
-        uint32_t sampleSize = rangeSize * perc;
-        vector<uint32_t> sample;
-        sample.reserve(sampleSize);
-        std::uniform_int_distribution<uint32_t> distribution(min, max-1);
-        while (sample.size() < sampleSize) {
-            sample.push_back(distribution(rd));
-        }
-//        std::sort(sample.begin(), sample.end());
-        return sample;
-    }
 
     static uint64_t topUpSingle(float points[][112], vector<KnnSetScannableSimd>& idToKnn) {
         auto startTopup = hclock::now();
@@ -255,12 +243,10 @@ struct SolutionKmeans {
         return globalGrpToIds;
     }
 
-    static vector<vector<uint32_t>> getPerGroupsSample(uint32_t numPoints, uint32_t numPossibleGroups, vector<uint32_t>& id_to_group) {
-        auto globalGrpToIds = aggregateGroups(numPoints, numPossibleGroups, id_to_group);
-
+    static vector<vector<uint32_t>> getPerGroupsSample(uint32_t numPossibleGroups, vector<vector<uint32_t>>& grpIdToGroup) {
         vector<vector<uint32_t>> samples(numPossibleGroups);
         for (uint32_t g = 0; g < numPossibleGroups; ++g) {
-            auto& ids = globalGrpToIds[g];
+            auto& ids = grpIdToGroup[g];
             if (ids.empty()) { continue; }
 
             std::uniform_int_distribution<uint32_t> distribution(0, ids.size() - 1);
@@ -308,11 +294,17 @@ struct SolutionKmeans {
 
         uint32_t maxDepth = requiredHashFuncs(numPoints, maxGroupSize);
         uint32_t numCurrGroups = 1;
+
+        vector<vector<uint32_t>> singleGroup(1);
+        singleGroup[0].resize(numPoints);
+        std::iota(singleGroup[0].begin(), singleGroup[0].end(), 0);
+
         for (uint32_t depth = 0; depth < maxDepth; ++depth) {
 
             // Get samples for initial centers
             auto s1 = hclock::now();
-            auto groupSamples = getPerGroupsSample(numPoints, numCurrGroups, id_to_group);
+            auto grpIdToGroup = depth == 0 ? std::move(singleGroup) : aggregateGroups(numPoints, numCurrGroups, id_to_group);
+            auto groupSamples = getPerGroupsSample(numCurrGroups, grpIdToGroup);
             stage[1] += duration_cast<milliseconds>(hclock::now() - s1).count();
 
             // get centers and split plane from samples
