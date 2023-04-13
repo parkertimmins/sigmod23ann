@@ -28,7 +28,6 @@
 #include "LinearAlgebra.hpp"
 #include "Utility.hpp"
 #include <ranges>
-#include "tsl/robin_map.h"
 
 
 using std::cout;
@@ -212,57 +211,53 @@ struct SolutionKmeans {
         return nodesUpdated.load();
     }
 
-    static tsl::robin_map<uint32_t, vector<uint32_t>> aggregateGroups(uint32_t numPoints, vector<uint32_t>& id_to_group) {
+    static vector<vector<uint32_t>> aggregateGroups(uint32_t numPoints, uint32_t numPossibleGroups, vector<uint32_t>& id_to_group) {
         uint32_t numThreads = std::thread::hardware_concurrency();
         auto ranges = splitRange({0, numPoints}, numThreads);
 
         auto s = hclock::now();
         // convert id->grpId into grpId -> {id}
-        using grp_to_ids = tsl::robin_map<uint32_t, vector<uint32_t>>;
-        vector<grp_to_ids> localGrpToIds(ranges.size());
+        vector<vector<vector<uint32_t>>> localGrpToIds(ranges.size());
         vector<std::thread> threads;
         for (uint32_t t = 0; t < numThreads; ++t) {
             threads.emplace_back([&, t]() {
                 auto& local = localGrpToIds[t];
+                local.resize(numPossibleGroups);
                 auto range = ranges[t];
                 for (uint32_t i = range.first; i < range.second; ++i) {
                     uint32_t grp = id_to_group[i];
-                    if (local.find(grp) == local.end()) {
-                        local[grp] = vector<uint32_t>();
-                    }
                     local[grp].push_back(i);
                 }
             });
         }
         for (auto& thread: threads) { thread.join(); }
 
-        grp_to_ids globalGrpToIds;
+        vector<vector<uint32_t>> globalGrpToIds(numPossibleGroups);
         for (auto& local : localGrpToIds) {
-            for (auto& [grp, idsLocal] : local) {
-                if (globalGrpToIds.find(grp) == globalGrpToIds.end()) {
-                    globalGrpToIds[grp] = idsLocal;
-                } else {
-                    auto& ids = globalGrpToIds[grp];
-                    ids.insert(ids.end(), idsLocal.begin(), idsLocal.end());
-                }
+            for (uint32_t g = 0; g < numPossibleGroups; ++g) {
+                auto& ids = globalGrpToIds[g];
+                auto& idsLocal = local[g];
+                ids.insert(ids.end(), idsLocal.begin(), idsLocal.end());
             }
         }
         return globalGrpToIds;
     }
 
-    static tsl::robin_map<uint32_t, vector<uint32_t>> getPerGroupsSample(uint32_t numPoints, vector<uint32_t>& id_to_group) {
+    static vector<vector<uint32_t>> getPerGroupsSample(uint32_t numPoints, uint32_t numPossibleGroups, vector<uint32_t>& id_to_group) {
         auto s = hclock::now();
-        auto globalGrpToIds = aggregateGroups(numPoints, id_to_group);
+        auto globalGrpToIds = aggregateGroups(numPoints, numPossibleGroups, id_to_group);
         stage[12] += duration_cast<milliseconds>(hclock::now() - s).count();
 
         s = hclock::now();
-        tsl::robin_map<uint32_t, vector<uint32_t>> samples;
-        for (auto& [grp, ids] : globalGrpToIds) {
-            std::uniform_int_distribution<uint32_t> distribution(0, ids.size() - 1);
+        vector<vector<uint32_t>> samples(numPossibleGroups);
+        for (uint32_t g = 0; g < numPossibleGroups; ++g) {
+            auto& ids = globalGrpToIds[g];
+            if (ids.empty()) { continue; }
 
+            std::uniform_int_distribution<uint32_t> distribution(0, ids.size() - 1);
             // stupid case that should be fixed somewhere else!
             if (ids.size() <= 5) {
-                samples[grp] = ids.size() == 1 ? vector{ids[0], ids[0]} : vector{ids[0], ids[1]};
+                samples[g] = ids.size() == 1 ? vector{ids[0], ids[0]} : vector{ids[0], ids[1]};
             } else {
                 uint32_t id1 = ids[distribution(rd)];
                 uint32_t id2;
@@ -270,7 +265,7 @@ struct SolutionKmeans {
                     id2 = ids[distribution(rd)];
                 } while (id1 == id2);
 
-                samples[grp] = {id1, id2};
+                samples[g] = {id1, id2};
             }
         }
         stage[13] += duration_cast<milliseconds>(hclock::now() - s).count();
@@ -301,30 +296,36 @@ struct SolutionKmeans {
         uint32_t numThreads = std::thread::hardware_concurrency();
         auto ranges = splitRange({0, numPoints}, numThreads);
 
-        vector<uint32_t> id_to_group(numPoints, 1);
+        vector<uint32_t> id_to_group(numPoints, 0);
+
         uint32_t maxDepth = requiredHashFuncs(numPoints, maxGroupSize);
+        uint32_t numCurrGroups = 1;
+        uint32_t numNextGroups = 2 * numCurrGroups;
         for (uint32_t depth = 0; depth < maxDepth; ++depth) {
 
             // Get samples for initial centers
             auto s1 = hclock::now();
-            auto perGroupSamples = getPerGroupsSample(numPoints, id_to_group);
+            auto groupSamples = getPerGroupsSample(numPoints, numCurrGroups, id_to_group);
             stage[1] += duration_cast<milliseconds>(hclock::now() - s1).count();
 
             // get centers and split plane from samples
             auto s2 = hclock::now();
-            tsl::robin_map<uint32_t, pair<Vec, Vec>> groupCenters;
-            tsl::robin_map<uint32_t, pair<float, Vec>> groupPlane;
-            for (auto& [grp, sample] : perGroupSamples) {
+            vector<pair<Vec, Vec>> groupCenters(numCurrGroups);
+            vector<pair<float, Vec>> groupPlanes(numCurrGroups);;
+            for (uint32_t g = 0; g < numCurrGroups; ++g) {
+                auto& sample = groupSamples[g];
+                if (sample.empty()) { continue; }
+
                 Vec c1(100);
                 Vec c2(100);
                 for (uint32_t j = 0; j < 100; ++j) { c1[j] = points[sample[0]][j]; }
                 for (uint32_t j = 0; j < 100; ++j) { c2[j] = points[sample[1]][j]; }
-                groupCenters[grp] = { c1, c2 };
+                groupCenters[g] = { c1, c2 };
 
                 auto between = scalarMult(0.5, add(c1, c2));
                 auto coefs = sub(c1, between);
                 auto offset = dot(between.data(), coefs.data());
-                groupPlane[grp] = { offset, coefs };
+                groupPlanes[g] = { offset, coefs };
             };
             stage[2] += duration_cast<milliseconds>(hclock::now() - s2).count();
 
@@ -339,24 +340,19 @@ struct SolutionKmeans {
                 // assign points to either side of splits planes
                 auto s3 = hclock::now();
                 using centroid_agg = pair<uint32_t, vector<float>>;
-                using group_center_agg = tsl::robin_map<uint32_t, pair<centroid_agg, centroid_agg>>;
-                vector<group_center_agg> localGroupCenterAggs(ranges.size());
+                vector<vector<pair<centroid_agg, centroid_agg>>> localGroupCenterAggs(ranges.size());
                 vector<std::thread> threads;
                 for (uint32_t t = 0; t < numThreads; ++t) {
                     threads.emplace_back([&, t]() {
                         auto range = ranges[t];
                         std::uniform_real_distribution<float> sampleDist(0, 1);
                         auto& center_agg = localGroupCenterAggs[t];
+                        center_agg.resize(numCurrGroups, { { 0, vector<float>(100, 0.0f) }, { 0, vector<float>(100, 0.0f) } });
                         for (uint32_t i = range.first; i < range.second; ++i) {
                             // !could result in some groups never getting sampled!
                             if (sampleDist(rd) < sampleRate) {
                                 auto grp = id_to_group[i];
-                                auto& [offset, coefs] = groupPlane[grp];
-
-                                if (center_agg.find(grp) == center_agg.end()) {
-                                    center_agg[grp] = { { 0, vector<float>(100, 0.0f) }, { 0, vector<float>(100, 0.0f) } };
-                                }
-
+                                auto& [offset, coefs] = groupPlanes[grp];
                                 auto& pt = points[i];
                                 auto& [agg1, agg2] = center_agg[grp];
                                 auto& aggToUse = dot(coefs.data(), pt) >= offset ? agg1 : agg2;
@@ -372,26 +368,28 @@ struct SolutionKmeans {
 
                 // aggregate local results for split plane assignment
                 auto s4 = hclock::now();
-                group_center_agg globalCenterAggs;
+                vector<pair<centroid_agg, centroid_agg>> globalCenterAggs(numCurrGroups, { { 0, vector<float>(100, 0.0f) }, { 0, vector<float>(100, 0.0f) } });
                 for (auto& local : localGroupCenterAggs) {
-                    for (auto& [grp, ca] : local) {
-                        if (globalCenterAggs.find(grp) == globalCenterAggs.end()) {
-                            globalCenterAggs[grp] = ca;
-                        } else {
-                            auto& [c1, c2] = globalCenterAggs[grp];
-                            c1.first += ca.first.first;
-                            c2.first += ca.second.first;
-                            for (uint32_t j = 0; j < dims; ++j) { c1.second[j] += ca.first.second[j]; }
-                            for (uint32_t j = 0; j < dims; ++j) { c2.second[j] += ca.second.second[j]; }
-                        }
+                    for (uint32_t g = 0; g < numCurrGroups; ++g) {
+                        auto& ca = local[g];
+                        auto& [c1, c2] = globalCenterAggs[g];
+                        c1.first += ca.first.first;
+                        c2.first += ca.second.first;
+                        for (uint32_t j = 0; j < dims; ++j) { c1.second[j] += ca.first.second[j]; }
+                        for (uint32_t j = 0; j < dims; ++j) { c2.second[j] += ca.second.second[j]; }
                     }
                 }
                 stage[4] += duration_cast<milliseconds>(hclock::now() - s4).count();
 
                 auto s5 = hclock::now();
-                for (auto& [grp, center_aggs] : globalCenterAggs)  {
-                    auto& [center1, center2] = groupCenters[grp];
+                for (uint32_t g = 0; g < numCurrGroups; ++g) {
+                    auto& center_aggs = globalCenterAggs[g];
+                    auto& [center1, center2] = groupCenters[g];
                     auto& [c1_agg, c2_agg] = center_aggs;
+
+                    if (c1_agg.first == 0 || c2_agg.first == 0) {
+                        continue;
+                    }
                     for (uint32_t i = 0; i < dims; ++i) {
                         center1[i] = c1_agg.second[i] / c1_agg.first;
                         center2[i] = c2_agg.second[i] / c2_agg.first;
@@ -399,7 +397,7 @@ struct SolutionKmeans {
                     auto between = scalarMult(0.5, add(center1, center2));
                     auto coefs = sub(center1, between);
                     auto offset = dot(between.data(), coefs.data());
-                    groupPlane[grp] = { offset, coefs };
+                    groupPlanes[g] = { offset, coefs };
                 };
                 stage[5] += duration_cast<milliseconds>(hclock::now() - s5).count();
             }
@@ -412,27 +410,34 @@ struct SolutionKmeans {
                     auto range = ranges[t];
                     for (uint32_t i = range.first; i < range.second; ++i) {
                         uint32_t grp = id_to_group[i];
-                        auto& [offset, coefs] = groupPlane[grp];
-                        id_to_group[i] = dot(coefs.data(), points[i]) >= offset ? 2 * grp : 2 * grp + 1;
+                        auto& [offset, coefs] = groupPlanes[grp];
+                        id_to_group[i] = dot(coefs.data(), points[i]) >= offset ? grp : grp + numCurrGroups;
                     }
                 });
             }
             for (auto& thread: threads) { thread.join(); }
             stage[6] += duration_cast<milliseconds>(hclock::now() - s6).count();
+
+            numCurrGroups = numNextGroups;
+            numNextGroups = 2 * numCurrGroups;
         }
 
         // convert id->grpId into grpId -> {id}
         auto s7 = hclock::now();
-        auto globalGrpToIds = aggregateGroups(numPoints, id_to_group);
+        auto globalGrpToIds = aggregateGroups(numPoints, numCurrGroups, id_to_group);
         stage[7] += duration_cast<milliseconds>(hclock::now() - s7).count();
 
         vector<vector<uint32_t>> groups;
         groups.reserve(globalGrpToIds.size());
 
         uint32_t groupsSkipped = 0;
+        uint32_t emptyGroups = 0;
         uint32_t totalIdsSkipped = 0;
-        for (auto& [id, group] : globalGrpToIds) {
-            if (group.size() < 2'000) {
+        for (uint32_t g = 0; g < numCurrGroups; ++g) {
+            auto& group = globalGrpToIds[g];
+            if (group.empty()) {
+                emptyGroups++;
+            } else if (group.size() < 2'000) {
                 groups.push_back(group);
             } else {
                 groupsSkipped++;
@@ -441,7 +446,7 @@ struct SolutionKmeans {
         }
         std::cout << "num groups: " << groups.size() << "\n";
         std::cout << "num skipped groups: " << groupsSkipped << ", total size: " << totalIdsSkipped
-            << ", avg size: " << static_cast<float>(totalIdsSkipped) / groupsSkipped << "\n";
+            << ", avg size: " << static_cast<float>(totalIdsSkipped) / groupsSkipped << ", empty: " << emptyGroups << "\n";
         globalGrpToIds.clear();
 
         auto s9 = hclock::now();
@@ -454,6 +459,7 @@ struct SolutionKmeans {
             }
         );
         stage[9] += duration_cast<milliseconds>(hclock::now() - s9).count();
+
     }
 
     static void constructResult(float points[][112], uint32_t numPoints, vector<vector<uint32_t>>& result) {
