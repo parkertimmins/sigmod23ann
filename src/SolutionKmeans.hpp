@@ -483,7 +483,7 @@ struct SolutionKmeans {
                     }
                 }
             );
-            auto processDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
+            auto processDuration = duration_cast<milliseconds>(hclock::now() - startProcess).count();
             std::cout << " process time: " << processDuration << '\n';
 
             for (uint32_t i = 0; i < stage.size(); ++i) {
