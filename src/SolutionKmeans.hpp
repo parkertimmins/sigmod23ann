@@ -637,79 +637,66 @@ struct SolutionKmeans {
         return nodesUpdated.load();
     }
 
-
-    static tsl::robin_map<uint32_t, pair<uint32_t, vector<uint32_t>>> getPerGroupsSample(uint32_t numPoints,
-                                                                                         vector<uint32_t>& id_to_group) {
-
+    static tsl::robin_map<uint32_t, vector<uint32_t>> getPerGroupsSample(uint32_t numPoints, vector<uint32_t>& id_to_group) {
         uint32_t numThreads = std::thread::hardware_concurrency();
         auto ranges = splitRange({0, numPoints}, numThreads);
-        static uint32_t resSize = 2;
-        using group_reservoirs = tsl::robin_map<uint32_t, pair<uint32_t, vector<uint32_t>>>;
 
-        vector<group_reservoirs> localGroupReservoirs(ranges.size());
+        auto s = hclock::now();
+        // convert id->grpId into grpId -> {id}
+        using grp_to_ids = tsl::robin_map<uint32_t, vector<uint32_t>>;
+        vector<grp_to_ids> localGrpToIds(ranges.size());
         vector<std::thread> threads;
         for (uint32_t t = 0; t < numThreads; ++t) {
             threads.emplace_back([&, t]() {
-                auto r = ranges[t];
-                auto& localReservoirs = localGroupReservoirs[t];
-                for (uint32_t i = r.first; i < r.second; ++i) {
+                auto& local = localGrpToIds[t];
+                auto range = ranges[t];
+                for (uint32_t i = range.first; i < range.second; ++i) {
                     uint32_t grp = id_to_group[i];
-                    if (localReservoirs.find(grp) == localReservoirs.end()) {
-                        localReservoirs[grp] = {0, vector<uint32_t>()};
+                    if (local.find(grp) == local.end()) {
+                        local[grp] = vector<uint32_t>();
                     }
-                    auto& [numSeen, reservoir] = localReservoirs[grp];
-                    if (reservoir.size() < resSize) {
-                        reservoir.push_back(i);
-                    } else {
-                        std::uniform_int_distribution<uint32_t> distribution(0, numSeen);
-                        uint32_t j = distribution(rd);
-                        if (j < resSize) {
-                            reservoir[j] = i;
-                        }
-                    }
-                    numSeen++;
+                    local[grp].push_back(i);
                 }
             });
         }
         for (auto& thread: threads) { thread.join(); }
+        stage[11] += duration_cast<milliseconds>(hclock::now() - s).count();
 
-        group_reservoirs global;
-        for (auto& local : localGroupReservoirs) {
-            for (auto& [grp, resSet1] : local) {
-                auto it = global.find(grp);
-                if (it == global.end()) {
-                    global[grp] = resSet1;
+        s = hclock::now();
+        grp_to_ids globalGrpToIds;
+        for (auto& local : localGrpToIds) {
+            for (auto& [grp, idsLocal] : local) {
+                if (globalGrpToIds.find(grp) == globalGrpToIds.end()) {
+                    globalGrpToIds[grp] = idsLocal;
                 } else {
-                    auto& [numSeen1, res1] = resSet1;
-                    auto& [numSeen2, res2] = it->second;
-
-                    vector<uint32_t> options;
-                    options.reserve(res1.size() + res2.size());
-                    vector<uint32_t> weights;
-                    weights.reserve(res1.size() + res2.size());
-                    for (auto& a1 : res1) {
-                        options.push_back(a1);
-                        weights.push_back(numSeen1);
-                    }
-                    for (auto& a2 : res2) {
-                        options.push_back(a2);
-                        weights.push_back(numSeen2);
-                    }
-
-                    vector<uint32_t> result_res;
-                    result_res.reserve(res1.size());
-                    while (result_res.size() < res1.size()) {
-                        std::discrete_distribution<uint32_t> dist(weights.begin(), weights.end());
-                        uint32_t idx = dist(rd);
-                        result_res.push_back(options[idx]);
-                        options.erase(options.begin() + idx);
-                        weights.erase(weights.begin() + idx);
-                    }
-                    global[grp] = {numSeen1 + numSeen2, result_res};
+                    auto& ids = globalGrpToIds[grp];
+                    ids.insert(ids.end(), idsLocal.begin(), idsLocal.end());
                 }
             }
         }
-        return global;
+        stage[12] += duration_cast<milliseconds>(hclock::now() - s).count();
+
+        s = hclock::now();
+        tsl::robin_map<uint32_t, vector<uint32_t>> samples;
+        for (auto& [grp, ids] : globalGrpToIds) {
+            std::uniform_int_distribution<uint32_t> distribution(0, ids.size() - 1);
+
+            // stupid case that should be fixed somewhere else!
+            if (ids.size() <= 5) {
+                samples[grp] = ids.size() == 1 ? vector{ids[0], ids[0]} : vector{ids[0], ids[1]};
+            } else {
+                uint32_t id1 = ids[distribution(rd)];
+                uint32_t id2;
+                do {
+                    id2 = ids[distribution(rd)];
+                } while (id1 == id2);
+
+                samples[grp] = {id1, id2};
+            }
+        }
+        stage[13] += duration_cast<milliseconds>(hclock::now() - s).count();
+
+        return samples;
     }
 
     static uint32_t requiredHashFuncs(uint32_t numPoints, uint32_t maxBucketSize) {
@@ -722,16 +709,7 @@ struct SolutionKmeans {
         return numHashFuncs;
     }
 
-    inline static long stage1 = 0;
-    inline static long stage2 = 0;
-    inline static long stage3 = 0;
-    inline static long stage4 = 0;
-    inline static long stage5 = 0;
-    inline static long stage6 = 0;
-    inline static long stage7 = 0;
-    inline static long stage8 = 0;
-    inline static long stage9 = 0;
-
+    inline static vector<long> stage;
 
     // handle both point vector data and array data
     static void splitKmeansNonRec(
@@ -740,18 +718,9 @@ struct SolutionKmeans {
             uint32_t maxGroupSize,
             float points[][112],
             vector<KnnSetScannableSimd>& idToKnn) {
-
+        stage.resize(20);
         uint32_t numThreads = std::thread::hardware_concurrency();
         auto ranges = splitRange({0, numPoints}, numThreads);
-        stage1 = 0;
-        stage2 = 0;
-        stage3 = 0;
-        stage4 = 0;
-        stage5 = 0;
-        stage6 = 0;
-        stage7 = 0;
-        stage8 = 0;
-        stage9 = 0;
 
         vector<uint32_t> id_to_group(numPoints, 1);
         uint32_t maxDepth = requiredHashFuncs(numPoints, maxGroupSize);
@@ -760,14 +729,13 @@ struct SolutionKmeans {
             // Get samples for initial centers
             auto s1 = hclock::now();
             auto perGroupSamples = getPerGroupsSample(numPoints, id_to_group);
-            stage1 += duration_cast<milliseconds>(hclock::now() - s1).count();
+            stage[1] += duration_cast<milliseconds>(hclock::now() - s1).count();
 
             // get centers and split plane from samples
             auto s2 = hclock::now();
             tsl::robin_map<uint32_t, pair<Vec, Vec>> groupCenters;
             tsl::robin_map<uint32_t, pair<float, Vec>> groupPlane;
-            for (auto& [grp, countSample] : perGroupSamples) {
-                auto& [count, sample] = countSample;
+            for (auto& [grp, sample] : perGroupSamples) {
                 Vec c1(100);
                 Vec c2(100);
                 for (uint32_t j = 0; j < 100; ++j) { c1[j] = points[sample[0]][j]; }
@@ -779,7 +747,7 @@ struct SolutionKmeans {
                 auto offset = dot(between.data(), coefs.data());
                 groupPlane[grp] = { offset, coefs };
             };
-            stage2 += duration_cast<milliseconds>(hclock::now() - s2).count();
+            stage[2] += duration_cast<milliseconds>(hclock::now() - s2).count();
 
             for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
 
@@ -820,7 +788,7 @@ struct SolutionKmeans {
                     });
                 }
                 for (auto& thread: threads) { thread.join(); }
-                stage3 += duration_cast<milliseconds>(hclock::now() - s3).count();
+                stage[3] += duration_cast<milliseconds>(hclock::now() - s3).count();
 
 
                 // aggregate local results for split plane assignment
@@ -841,7 +809,7 @@ struct SolutionKmeans {
                         }
                     }
                 }
-                stage4 += duration_cast<milliseconds>(hclock::now() - s4).count();
+                stage[4] += duration_cast<milliseconds>(hclock::now() - s4).count();
 
                 auto s5 = hclock::now();
                 for (auto& [grp, center_aggs] : globalCenterAggs)  {
@@ -856,7 +824,7 @@ struct SolutionKmeans {
                     auto offset = dot(between.data(), coefs.data());
                     groupPlane[grp] = { offset, coefs };
                 };
-                stage5 += duration_cast<milliseconds>(hclock::now() - s5).count();
+                stage[5] += duration_cast<milliseconds>(hclock::now() - s5).count();
             }
 
             // recompute groups based on plane
@@ -873,7 +841,7 @@ struct SolutionKmeans {
                 });
             }
             for (auto& thread: threads) { thread.join(); }
-            stage6 += duration_cast<milliseconds>(hclock::now() - s6).count();
+            stage[6] += duration_cast<milliseconds>(hclock::now() - s6).count();
         }
 
         // convert id->grpId into grpId -> {id}
@@ -895,7 +863,7 @@ struct SolutionKmeans {
             });
         }
         for (auto& thread: threads) { thread.join(); }
-        stage7 += duration_cast<milliseconds>(hclock::now() - s7).count();
+        stage[7] += duration_cast<milliseconds>(hclock::now() - s7).count();
 
         auto s8 = hclock::now();
         grp_to_ids globalGrpToIds;
@@ -909,18 +877,24 @@ struct SolutionKmeans {
                 }
             }
         }
-        stage8 += duration_cast<milliseconds>(hclock::now() - s8).count();
+        stage[8] += duration_cast<milliseconds>(hclock::now() - s8).count();
 
         vector<vector<uint32_t>> groups;
         groups.reserve(globalGrpToIds.size());
+
+        uint32_t groupsSkipped = 0;
+        uint32_t totalIdsSkipped = 0;
         for (auto& [id, group] : globalGrpToIds) {
             if (group.size() < 2'000) {
                 groups.push_back(group);
             } else {
-                std::cout << "too large: " << group.size() << "\n";
+                groupsSkipped++;
+                totalIdsSkipped+=group.size();
             }
         }
         std::cout << "num groups: " << groups.size() << "\n";
+        std::cout << "num skipped groups: " << groupsSkipped << ", total size: " << totalIdsSkipped
+            << ", avg size: " << static_cast<float>(totalIdsSkipped) / groupsSkipped << "\n";
         globalGrpToIds.clear();
 
         auto s9 = hclock::now();
@@ -932,7 +906,7 @@ struct SolutionKmeans {
                 }
             }
         );
-        stage9 += duration_cast<milliseconds>(hclock::now() - s9).count();
+        stage[9] += duration_cast<milliseconds>(hclock::now() - s9).count();
     }
 
     static void constructResult(float points[][112], uint32_t numPoints, vector<vector<uint32_t>>& result) {
@@ -964,16 +938,12 @@ struct SolutionKmeans {
             std::cout << " avg process time: " << avgProcessTime << '\n';
             processTime = 0;
 
-            std::cout << "s1: "  << stage1 << "\n";
-            std::cout << "s2: "  << stage2 << "\n";
-            std::cout << "s3: "  << stage3 << "\n";
-            std::cout << "s4: "  << stage4 << "\n";
-            std::cout << "s5: "  << stage5 << "\n";
-            std::cout << "s6: "  << stage6 << "\n";
-            std::cout << "s7: "  << stage7 << "\n";
-            std::cout << "s8: "  << stage8 << "\n";
-            std::cout << "s9: "  << stage9 << "\n";
-
+            for (uint32_t i = 0; i < stage.size(); ++i) {
+                if (stage[i] > 0)  {
+                    std::cout << "s"  << i <<  ": " << stage[i] << "\n";
+                    stage[i] = 0;
+                }
+            }
 
             iteration++;
         }
