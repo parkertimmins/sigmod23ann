@@ -245,9 +245,9 @@ struct SolutionKmeans {
 
     static vector<pair<uint32_t, uint32_t>> getStartVecs(float points[][112], uint32_t numPossibleGroups, vector<vector<uint32_t>>& grpIdToGroup) {
         vector<pair<uint32_t, uint32_t>> samples(numPossibleGroups);
+        uint32_t numSamples = 10;
         for (uint32_t g = 0; g < numPossibleGroups; ++g) {
             auto& ids = grpIdToGroup[g];
-            uint32_t numSamples = 10;
             if (ids.empty()) {
                 samples[g] = {UINT32_MAX, UINT32_MAX};
             } else if (ids.size() <= numSamples) {
@@ -266,13 +266,11 @@ struct SolutionKmeans {
                 uint32_t idi, idj;
                 for (uint32_t i = 0; i < numSamples - 1; ++i) {
                     for (uint32_t j = i + 1; j < numSamples; ++j) {
-                        float* pi = points[ids[i]];
-                        float* pj = points[ids[j]];
-                        float dist = distance(pi, pj);
+                        float dist = distance(points[sample[i]], points[sample[j]]);
                         if (dist > maxDist) {
                             maxDist = dist;
-                            idi = ids[i];
-                            idj = ids[j];
+                            idi = sample[i];
+                            idj = sample[j];
                         }
                     }
                 }
