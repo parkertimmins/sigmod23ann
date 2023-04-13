@@ -243,16 +243,13 @@ struct SolutionKmeans {
         return globalGrpToIds;
     }
 
-    static vector<pair<uint32_t, uint32_t>> getStartVecs(float points[][112], uint32_t numPossibleGroups, vector<vector<uint32_t>>& grpIdToGroup) {
+    static vector<pair<uint32_t, uint32_t>> getStartVecs(uint32_t idealGroupSize, float points[][112], uint32_t numPossibleGroups, vector<vector<uint32_t>>& grpIdToGroup) {
         vector<pair<uint32_t, uint32_t>> samples(numPossibleGroups);
         uint32_t numSamples = 10;
         for (uint32_t g = 0; g < numPossibleGroups; ++g) {
             auto& ids = grpIdToGroup[g];
-            if (ids.empty()) {
+            if (ids.size() <= idealGroupSize) {
                 samples[g] = {UINT32_MAX, UINT32_MAX};
-            } else if (ids.size() <= numSamples) {
-                // stupid case that should be fixed somewhere else!
-                samples[g] = ids.size() == 1 ? make_pair(ids[0], ids[0]) : make_pair(ids[0], ids[1]);
             } else {
                 std::uniform_int_distribution<uint32_t> distribution(0, ids.size() - 1);
 
@@ -296,7 +293,7 @@ struct SolutionKmeans {
     static vector<vector<uint32_t>> splitKmeansNonRec(
             uint32_t numPoints,
             uint32_t knnIterations,
-            uint32_t maxGroupSize,
+            uint32_t idealGroupSize,
             float points[][112],
             vector<KnnSetScannableSimd>& idToKnn) {
         stage.resize(20);
@@ -305,7 +302,7 @@ struct SolutionKmeans {
 
         vector<uint32_t> id_to_group(numPoints, 0);
 
-        uint32_t maxDepth = requiredHashFuncs(numPoints, maxGroupSize);
+        uint32_t maxDepth = requiredHashFuncs(numPoints, idealGroupSize);
         uint32_t numCurrGroups = 1;
 
         vector<vector<uint32_t>> singleGroup(1);
@@ -317,27 +314,30 @@ struct SolutionKmeans {
             // Get samples for initial centers
             auto s1 = hclock::now();
             auto grpIdToGroup = depth == 0 ? std::move(singleGroup) : aggregateGroups(numPoints, numCurrGroups, id_to_group);
-            auto groupStarts = getStartVecs(points, numCurrGroups, grpIdToGroup);
+            auto groupStarts = getStartVecs(idealGroupSize, points, numCurrGroups, grpIdToGroup);
             stage[1] += duration_cast<milliseconds>(hclock::now() - s1).count();
 
             // get centers and split plane from samples
             auto s2 = hclock::now();
             vector<pair<Vec, Vec>> groupCenters(numCurrGroups);
             vector<pair<float, Vec>> groupPlanes(numCurrGroups);;
+            vector<bool> shouldSplit(numCurrGroups, true);
             for (uint32_t g = 0; g < numCurrGroups; ++g) {
                 auto& starts = groupStarts[g];
-                if (starts.first == UINT32_MAX) { continue; }
+                if (starts.first == UINT32_MAX) {
+                    shouldSplit[g] = false;
+                } else {
+                    Vec c1(100);
+                    Vec c2(100);
+                    for (uint32_t j = 0; j < 100; ++j) { c1[j] = points[starts.first][j]; }
+                    for (uint32_t j = 0; j < 100; ++j) { c2[j] = points[starts.second][j]; }
+                    groupCenters[g] = { c1, c2 };
 
-                Vec c1(100);
-                Vec c2(100);
-                for (uint32_t j = 0; j < 100; ++j) { c1[j] = points[starts.first][j]; }
-                for (uint32_t j = 0; j < 100; ++j) { c2[j] = points[starts.second][j]; }
-                groupCenters[g] = { c1, c2 };
-
-                auto between = scalarMult(0.5, add(c1, c2));
-                auto coefs = sub(c1, between);
-                auto offset = dot(between.data(), coefs.data());
-                groupPlanes[g] = { offset, coefs };
+                    auto between = scalarMult(0.5, add(c1, c2));
+                    auto coefs = sub(c1, between);
+                    auto offset = dot(between.data(), coefs.data());
+                    groupPlanes[g] = { offset, coefs };
+                }
             };
             stage[2] += duration_cast<milliseconds>(hclock::now() - s2).count();
 
@@ -362,14 +362,16 @@ struct SolutionKmeans {
                         center_agg.resize(numCurrGroups, { { 0, std::array<float, 100>() }, { 0, std::array<float, 100>() } });
                         for (uint32_t i = range.first; i < range.second; ++i) {
                             // !could result in some groups never getting sampled!
-                            if (sampleDist(rd) < sampleRate) {
-                                auto grp = id_to_group[i];
-                                auto& [offset, coefs] = groupPlanes[grp];
-                                auto& pt = points[i];
-                                auto& [agg1, agg2] = center_agg[grp];
-                                auto& aggToUse = dot(coefs.data(), pt) >= offset ? agg1 : agg2;
-                                aggToUse.first++;
-                                plusEq(aggToUse.second.data(), pt);
+                            auto grp = id_to_group[i];
+                            if (shouldSplit[grp]) {
+                                if (sampleDist(rd) < sampleRate) {
+                                    auto& [offset, coefs] = groupPlanes[grp];
+                                    auto& pt = points[i];
+                                    auto& [agg1, agg2] = center_agg[grp];
+                                    auto& aggToUse = dot(coefs.data(), pt) >= offset ? agg1 : agg2;
+                                    aggToUse.first++;
+                                    plusEq(aggToUse.second.data(), pt);
+                                }
                             }
                         }
                     });
@@ -383,33 +385,37 @@ struct SolutionKmeans {
                 vector<pair<centroid_agg, centroid_agg>> globalCenterAggs(numCurrGroups, { { 0, std::array<float, 100>() }, { 0, std::array<float, 100>() } });
                 for (auto& local : localGroupCenterAggs) {
                     for (uint32_t g = 0; g < numCurrGroups; ++g) {
-                        auto& ca = local[g];
-                        auto& [c1, c2] = globalCenterAggs[g];
-                        c1.first += ca.first.first;
-                        c2.first += ca.second.first;
-                        for (uint32_t j = 0; j < dims; ++j) { c1.second[j] += ca.first.second[j]; }
-                        for (uint32_t j = 0; j < dims; ++j) { c2.second[j] += ca.second.second[j]; }
+                        if (shouldSplit[g]) {
+                            auto& ca = local[g];
+                            auto& [c1, c2] = globalCenterAggs[g];
+                            c1.first += ca.first.first;
+                            c2.first += ca.second.first;
+                            for (uint32_t j = 0; j < dims; ++j) { c1.second[j] += ca.first.second[j]; }
+                            for (uint32_t j = 0; j < dims; ++j) { c2.second[j] += ca.second.second[j]; }
+                        }
                     }
                 }
                 stage[4] += duration_cast<milliseconds>(hclock::now() - s4).count();
 
                 auto s5 = hclock::now();
                 for (uint32_t g = 0; g < numCurrGroups; ++g) {
-                    auto& center_aggs = globalCenterAggs[g];
-                    auto& [center1, center2] = groupCenters[g];
-                    auto& [c1_agg, c2_agg] = center_aggs;
+                    if (shouldSplit[g]) {
+                        auto& center_aggs = globalCenterAggs[g];
+                        auto& [center1, center2] = groupCenters[g];
+                        auto& [c1_agg, c2_agg] = center_aggs;
 
-                    if (c1_agg.first == 0 || c2_agg.first == 0) {
-                        continue;
+                        if (c1_agg.first == 0 || c2_agg.first == 0) {
+                            continue;
+                        }
+                        for (uint32_t i = 0; i < dims; ++i) {
+                            center1[i] = c1_agg.second[i] / c1_agg.first;
+                            center2[i] = c2_agg.second[i] / c2_agg.first;
+                        }
+                        auto between = scalarMult(0.5, add(center1, center2));
+                        auto coefs = sub(center1, between);
+                        auto offset = dot(between.data(), coefs.data());
+                        groupPlanes[g] = { offset, coefs };
                     }
-                    for (uint32_t i = 0; i < dims; ++i) {
-                        center1[i] = c1_agg.second[i] / c1_agg.first;
-                        center2[i] = c2_agg.second[i] / c2_agg.first;
-                    }
-                    auto between = scalarMult(0.5, add(center1, center2));
-                    auto coefs = sub(center1, between);
-                    auto offset = dot(between.data(), coefs.data());
-                    groupPlanes[g] = { offset, coefs };
                 };
                 stage[5] += duration_cast<milliseconds>(hclock::now() - s5).count();
             }
@@ -422,8 +428,10 @@ struct SolutionKmeans {
                     auto range = ranges[t];
                     for (uint32_t i = range.first; i < range.second; ++i) {
                         uint32_t grp = id_to_group[i];
-                        auto& [offset, coefs] = groupPlanes[grp];
-                        id_to_group[i] = dot(coefs.data(), points[i]) >= offset ? grp : grp + numCurrGroups;
+                        if (shouldSplit[grp]) {
+                            auto& [offset, coefs] = groupPlanes[grp];
+                            id_to_group[i] = dot(coefs.data(), points[i]) >= offset ? grp : grp + numCurrGroups;
+                        }
                     }
                 });
             }
@@ -444,12 +452,14 @@ struct SolutionKmeans {
         uint32_t groupsSkipped = 0;
         uint32_t emptyGroups = 0;
         uint32_t totalIdsSkipped = 0;
+        uint32_t idsToProcess = 0;
         for (uint32_t g = 0; g < numCurrGroups; ++g) {
             auto& group = globalGrpToIds[g];
             if (group.empty()) {
                 emptyGroups++;
             } else if (group.size() < 2'000) {
                 groups.push_back(group);
+                idsToProcess += group.size();
             } else {
                 groupsSkipped++;
                 totalIdsSkipped+=group.size();
@@ -457,7 +467,7 @@ struct SolutionKmeans {
         }
         std::cout << "num groups: " << groups.size() << "\n";
         std::cout << "num skipped groups: " << groupsSkipped << ", total size: " << totalIdsSkipped
-            << ", avg size: " << static_cast<float>(totalIdsSkipped) / groupsSkipped << ", empty: " << emptyGroups << "\n";
+            << ", avg size: " << static_cast<float>(totalIdsSkipped) / groupsSkipped << ", empty: " << emptyGroups <<  ", to process: " << idsToProcess << "\n";
         globalGrpToIds.clear();
         return groups;
     }
