@@ -286,7 +286,7 @@ struct SolutionKmeans {
     inline static vector<long> stage;
 
     // handle both point vector data and array data
-    static void splitKmeansNonRec(
+    static vector<vector<uint32_t>> splitKmeansNonRec(
             uint32_t numPoints,
             uint32_t knnIterations,
             uint32_t maxGroupSize,
@@ -448,18 +448,7 @@ struct SolutionKmeans {
         std::cout << "num skipped groups: " << groupsSkipped << ", total size: " << totalIdsSkipped
             << ", avg size: " << static_cast<float>(totalIdsSkipped) / groupsSkipped << ", empty: " << emptyGroups << "\n";
         globalGrpToIds.clear();
-
-        auto s9 = hclock::now();
-        tbb::parallel_for(
-            tbb::blocked_range<uint32_t>(0, groups.size()),
-            [&](tbb::blocked_range<uint32_t> r) {
-                for (uint32_t i = r.begin(); i < r.end(); ++i) {
-                    addCandidatesGroup(points, groups[i], idToKnn);
-                }
-            }
-        );
-        stage[9] += duration_cast<milliseconds>(hclock::now() - s9).count();
-
+        return groups;
     }
 
     static void constructResult(float points[][112], uint32_t numPoints, vector<vector<uint32_t>>& result) {
@@ -480,16 +469,22 @@ struct SolutionKmeans {
         while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
             std::cout << "Iteration: " << iteration << '\n';
 
-            auto startGroupProcess = hclock::now();
-            splitKmeansNonRec(numPoints, 1, 400, points, idToKnn);
+            auto startGroup = hclock::now();
+            auto groups = splitKmeansNonRec(numPoints, 1, 400, points, idToKnn);
+            auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
+            std::cout << " group time: " << groupDuration << '\n';
 
-            auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroupProcess).count();
-            std::cout << " group/process time: " << groupDuration << '\n';
-            groupProcessTime += groupDuration;
-            uint64_t avgProcessTime = processTime / numThreads;
-            std::cout << " avg group time: " << groupDuration - avgProcessTime << '\n';
-            std::cout << " avg process time: " << avgProcessTime << '\n';
-            processTime = 0;
+            auto startProcess = hclock::now();
+            tbb::parallel_for(
+                tbb::blocked_range<uint32_t>(0, groups.size()),
+                [&](tbb::blocked_range<uint32_t> r) {
+                    for (uint32_t i = r.begin(); i < r.end(); ++i) {
+                        addCandidatesGroup(points, groups[i], idToKnn);
+                    }
+                }
+            );
+            auto processDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
+            std::cout << " process time: " << processDuration << '\n';
 
             for (uint32_t i = 0; i < stage.size(); ++i) {
                 if (stage[i] > 0)  {
