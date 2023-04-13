@@ -242,8 +242,8 @@ struct SolutionKmeans {
             threads.emplace_back([&, t]() {
                 auto& gr = groupRanges[t];
                 for (uint32_t g = gr.first; g < gr.second; ++g) {
+                    auto& ids = globalGrpToIds[g];
                     for (auto &local: localGrpToIds) {
-                        auto& ids = globalGrpToIds[g];
                         auto& idsLocal = local[g];
                         ids.insert(ids.end(), idsLocal.begin(), idsLocal.end());
                     }
@@ -256,11 +256,8 @@ struct SolutionKmeans {
     }
 
     static vector<vector<uint32_t>> getPerGroupsSample(uint32_t numPoints, uint32_t numPossibleGroups, vector<uint32_t>& id_to_group) {
-        auto s = hclock::now();
         auto globalGrpToIds = aggregateGroups(numPoints, numPossibleGroups, id_to_group);
-        stage[12] += duration_cast<milliseconds>(hclock::now() - s).count();
 
-        s = hclock::now();
         vector<vector<uint32_t>> samples(numPossibleGroups);
         for (uint32_t g = 0; g < numPossibleGroups; ++g) {
             auto& ids = globalGrpToIds[g];
@@ -280,7 +277,6 @@ struct SolutionKmeans {
                 samples[g] = {id1, id2};
             }
         }
-        stage[13] += duration_cast<milliseconds>(hclock::now() - s).count();
 
         return samples;
     }
@@ -350,7 +346,7 @@ struct SolutionKmeans {
 
                 // assign points to either side of splits planes
                 auto s3 = hclock::now();
-                using centroid_agg = pair<uint32_t, vector<float>>;
+                using centroid_agg = pair<uint32_t, std::array<float, 100>>;
                 vector<vector<pair<centroid_agg, centroid_agg>>> localGroupCenterAggs(ranges.size());
                 vector<std::thread> threads;
                 for (uint32_t t = 0; t < numThreads; ++t) {
@@ -358,7 +354,7 @@ struct SolutionKmeans {
                         auto range = ranges[t];
                         std::uniform_real_distribution<float> sampleDist(0, 1);
                         auto& center_agg = localGroupCenterAggs[t];
-                        center_agg.resize(numCurrGroups, { { 0, vector<float>(100, 0.0f) }, { 0, vector<float>(100, 0.0f) } });
+                        center_agg.resize(numCurrGroups, { { 0, std::array<float, 100>() }, { 0, std::array<float, 100>() } });
                         for (uint32_t i = range.first; i < range.second; ++i) {
                             // !could result in some groups never getting sampled!
                             if (sampleDist(rd) < sampleRate) {
@@ -379,7 +375,7 @@ struct SolutionKmeans {
 
                 // aggregate local results for split plane assignment
                 auto s4 = hclock::now();
-                vector<pair<centroid_agg, centroid_agg>> globalCenterAggs(numCurrGroups, { { 0, vector<float>(100, 0.0f) }, { 0, vector<float>(100, 0.0f) } });
+                vector<pair<centroid_agg, centroid_agg>> globalCenterAggs(numCurrGroups, { { 0, std::array<float, 100>() }, { 0, std::array<float, 100>() } });
                 for (auto& local : localGroupCenterAggs) {
                     for (uint32_t g = 0; g < numCurrGroups; ++g) {
                         auto& ca = local[g];
