@@ -233,13 +233,33 @@ struct SolutionKmeans {
         for (auto& thread: threads) { thread.join(); }
 
         vector<vector<uint32_t>> globalGrpToIds(numPossibleGroups);
-        for (auto& local : localGrpToIds) {
-            for (uint32_t g = 0; g < numPossibleGroups; ++g) {
-                auto& ids = globalGrpToIds[g];
-                auto& idsLocal = local[g];
-                ids.insert(ids.end(), idsLocal.begin(), idsLocal.end());
+        if (numPossibleGroups < 100) {
+            for (auto& local : localGrpToIds) {
+                for (uint32_t g = 0; g < numPossibleGroups; ++g) {
+                    auto& ids = globalGrpToIds[g];
+                    auto& idsLocal = local[g];
+                    ids.insert(ids.end(), idsLocal.begin(), idsLocal.end());
+                }
             }
+        } else {
+            auto groupRanges = splitRange({0, numPossibleGroups}, numThreads);
+            // convert id->grpId into grpId -> {id}
+            threads.clear();
+            for (uint32_t t = 0; t < numThreads; ++t) {
+                threads.emplace_back([&, t]() {
+                    auto& gr = groupRanges[t];
+                    for (uint32_t g = gr.first; g < gr.second; ++g) {
+                        for (auto &local: localGrpToIds) {
+                            auto& ids = globalGrpToIds[g];
+                            auto& idsLocal = local[g];
+                            ids.insert(ids.end(), idsLocal.begin(), idsLocal.end());
+                        }
+                    }
+                });
+            }
+            for (auto& thread: threads) { thread.join(); }
         }
+
         return globalGrpToIds;
     }
 
@@ -300,7 +320,6 @@ struct SolutionKmeans {
 
         uint32_t maxDepth = requiredHashFuncs(numPoints, maxGroupSize);
         uint32_t numCurrGroups = 1;
-        uint32_t numNextGroups = 2 * numCurrGroups;
         for (uint32_t depth = 0; depth < maxDepth; ++depth) {
 
             // Get samples for initial centers
@@ -418,8 +437,7 @@ struct SolutionKmeans {
             for (auto& thread: threads) { thread.join(); }
             stage[6] += duration_cast<milliseconds>(hclock::now() - s6).count();
 
-            numCurrGroups = numNextGroups;
-            numNextGroups = 2 * numCurrGroups;
+            numCurrGroups *= 2;
         }
 
         // convert id->grpId into grpId -> {id}
