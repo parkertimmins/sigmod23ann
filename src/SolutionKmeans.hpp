@@ -28,7 +28,7 @@
 #include "LinearAlgebra.hpp"
 #include "Utility.hpp"
 #include <ranges>
-
+#include "../thirdparty/perfevent/PerfEvent.hpp"
 
 using std::cout;
 using std::string;
@@ -41,6 +41,10 @@ using std::unordered_map;
 using std::make_pair;
 using std::pair;
 using std::vector;
+
+
+#define PERF
+
 
 struct SolutionKmeans {
 
@@ -249,6 +253,7 @@ struct SolutionKmeans {
         for (uint32_t g = 0; g < numPossibleGroups; ++g) {
             auto& ids = grpIdToGroup[g];
             if (ids.size() <= idealGroupSize) {
+                // signifies that group is too small to split
                 samples[g] = {UINT32_MAX, UINT32_MAX};
             } else {
                 std::uniform_int_distribution<uint32_t> distribution(0, ids.size() - 1);
@@ -312,10 +317,22 @@ struct SolutionKmeans {
         for (uint32_t depth = 0; depth < maxDepth; ++depth) {
 
             // Get samples for initial centers
+#ifdef PERF
+            PerfEvent perf;
+            perf.startCounters();
+#endif
             auto s1 = hclock::now();
             auto grpIdToGroup = depth == 0 ? std::move(singleGroup) : aggregateGroups(numPoints, numCurrGroups, id_to_group);
             auto groupStarts = getStartVecs(idealGroupSize, points, numCurrGroups, grpIdToGroup);
             stage[1] += duration_cast<milliseconds>(hclock::now() - s1).count();
+
+#ifdef PERF
+            perf.stopCounters();
+            std::cout << "sample start points\n";
+            perf.printReport(std::cout, 1);
+            std::cout << std::endl;
+            perf.startCounters();
+#endif
 
             // get centers and split plane from samples
             auto s2 = hclock::now();
@@ -340,6 +357,14 @@ struct SolutionKmeans {
                 }
             };
             stage[2] += duration_cast<milliseconds>(hclock::now() - s2).count();
+
+#ifdef PERF
+            perf.stopCounters();
+            std::cout << "compute split planes\n";
+            perf.printReport(std::cout, 1);
+            std::cout << std::endl;
+            perf.startCounters();
+#endif
 
             for (uint32_t iteration = 0; iteration < knnIterations; ++iteration) {
 
@@ -420,6 +445,15 @@ struct SolutionKmeans {
                 stage[5] += duration_cast<milliseconds>(hclock::now() - s5).count();
             }
 
+
+#ifdef PERF
+            perf.stopCounters();
+            std::cout << "kmean iter loop\n";
+            perf.printReport(std::cout, 1);
+            std::cout << std::endl;
+            perf.startCounters();
+#endif
+
             // recompute groups based on plane
             auto s6 = hclock::now();
             vector<std::thread> threads;
@@ -437,6 +471,14 @@ struct SolutionKmeans {
             }
             for (auto& thread: threads) { thread.join(); }
             stage[6] += duration_cast<milliseconds>(hclock::now() - s6).count();
+
+#ifdef PERF
+            perf.stopCounters();
+            std::cout << "group split\n";
+            perf.printReport(std::cout, 1);
+            std::cout << std::endl;
+            perf.startCounters();
+#endif
 
             numCurrGroups *= 2;
         }
