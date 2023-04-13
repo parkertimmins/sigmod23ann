@@ -637,7 +637,7 @@ struct SolutionKmeans {
         return nodesUpdated.load();
     }
 
-    static tsl::robin_map<uint32_t, vector<uint32_t>> getPerGroupsSample(uint32_t numPoints, vector<uint32_t>& id_to_group) {
+    static tsl::robin_map<uint32_t, vector<uint32_t>> aggregateGroups(uint32_t numPoints, vector<uint32_t>& id_to_group) {
         uint32_t numThreads = std::thread::hardware_concurrency();
         auto ranges = splitRange({0, numPoints}, numThreads);
 
@@ -660,9 +660,7 @@ struct SolutionKmeans {
             });
         }
         for (auto& thread: threads) { thread.join(); }
-        stage[11] += duration_cast<milliseconds>(hclock::now() - s).count();
 
-        s = hclock::now();
         grp_to_ids globalGrpToIds;
         for (auto& local : localGrpToIds) {
             for (auto& [grp, idsLocal] : local) {
@@ -674,6 +672,12 @@ struct SolutionKmeans {
                 }
             }
         }
+        return globalGrpToIds;
+    }
+
+    static tsl::robin_map<uint32_t, vector<uint32_t>> getPerGroupsSample(uint32_t numPoints, vector<uint32_t>& id_to_group) {
+        auto s = hclock::now();
+        auto globalGrpToIds = aggregateGroups(numPoints, id_to_group);
         stage[12] += duration_cast<milliseconds>(hclock::now() - s).count();
 
         s = hclock::now();
@@ -802,10 +806,8 @@ struct SolutionKmeans {
                             auto& [c1, c2] = globalCenterAggs[grp];
                             c1.first += ca.first.first;
                             c2.first += ca.second.first;
-                            for (uint32_t j = 0; j < dims; ++j) {
-                                c1.second[j] += ca.first.second[j];
-                                c2.second[j] += ca.second.second[j];
-                            }
+                            for (uint32_t j = 0; j < dims; ++j) { c1.second[j] += ca.first.second[j]; }
+                            for (uint32_t j = 0; j < dims; ++j) { c2.second[j] += ca.second.second[j]; }
                         }
                     }
                 }
@@ -846,38 +848,8 @@ struct SolutionKmeans {
 
         // convert id->grpId into grpId -> {id}
         auto s7 = hclock::now();
-        using grp_to_ids = tsl::robin_map<uint32_t, vector<uint32_t>>;
-        vector<grp_to_ids> localGrpToIds(ranges.size());
-        vector<std::thread> threads;
-        for (uint32_t t = 0; t < numThreads; ++t) {
-            threads.emplace_back([&, t]() {
-                auto& local = localGrpToIds[t];
-                auto range = ranges[t];
-                for (uint32_t i = range.first; i < range.second; ++i) {
-                    uint32_t grp = id_to_group[i];
-                    if (local.find(grp) == local.end()) {
-                        local[grp] = vector<uint32_t>();
-                    }
-                    local[grp].push_back(i);
-                }
-            });
-        }
-        for (auto& thread: threads) { thread.join(); }
+        auto globalGrpToIds = aggregateGroups(numPoints, id_to_group);
         stage[7] += duration_cast<milliseconds>(hclock::now() - s7).count();
-
-        auto s8 = hclock::now();
-        grp_to_ids globalGrpToIds;
-        for (auto& local : localGrpToIds) {
-            for (auto& [grp, idsLocal] : local) {
-                if (globalGrpToIds.find(grp) == globalGrpToIds.end()) {
-                    globalGrpToIds[grp] = idsLocal;
-                } else {
-                    auto& ids = globalGrpToIds[grp];
-                    ids.insert(ids.end(), idsLocal.begin(), idsLocal.end());
-                }
-            }
-        }
-        stage[8] += duration_cast<milliseconds>(hclock::now() - s8).count();
 
         vector<vector<uint32_t>> groups;
         groups.reserve(globalGrpToIds.size());
