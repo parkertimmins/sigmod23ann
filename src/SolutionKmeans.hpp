@@ -233,32 +233,24 @@ struct SolutionKmeans {
         for (auto& thread: threads) { thread.join(); }
 
         vector<vector<uint32_t>> globalGrpToIds(numPossibleGroups);
-        if (numPossibleGroups < 100) {
-            for (auto& local : localGrpToIds) {
-                for (uint32_t g = 0; g < numPossibleGroups; ++g) {
-                    auto& ids = globalGrpToIds[g];
-                    auto& idsLocal = local[g];
-                    ids.insert(ids.end(), idsLocal.begin(), idsLocal.end());
-                }
-            }
-        } else {
-            auto groupRanges = splitRange({0, numPossibleGroups}, numThreads);
-            // convert id->grpId into grpId -> {id}
-            threads.clear();
-            for (uint32_t t = 0; t < numThreads; ++t) {
-                threads.emplace_back([&, t]() {
-                    auto& gr = groupRanges[t];
-                    for (uint32_t g = gr.first; g < gr.second; ++g) {
-                        for (auto &local: localGrpToIds) {
-                            auto& ids = globalGrpToIds[g];
-                            auto& idsLocal = local[g];
-                            ids.insert(ids.end(), idsLocal.begin(), idsLocal.end());
-                        }
+
+        auto numGroupingThreads = std::min(numThreads, numPossibleGroups);
+        auto groupRanges = splitRange({0, numPossibleGroups}, numGroupingThreads);
+        // convert id->grpId into grpId -> {id}
+        threads.clear();
+        for (uint32_t t = 0; t < numGroupingThreads; ++t) {
+            threads.emplace_back([&, t]() {
+                auto& gr = groupRanges[t];
+                for (uint32_t g = gr.first; g < gr.second; ++g) {
+                    for (auto &local: localGrpToIds) {
+                        auto& ids = globalGrpToIds[g];
+                        auto& idsLocal = local[g];
+                        ids.insert(ids.end(), idsLocal.begin(), idsLocal.end());
                     }
-                });
-            }
-            for (auto& thread: threads) { thread.join(); }
+                }
+            });
         }
+        for (auto& thread: threads) { thread.join(); }
 
         return globalGrpToIds;
     }
