@@ -247,12 +247,10 @@ struct SolutionKmeans {
         vector<pair<uint32_t, uint32_t>> samples(numPossibleGroups);
         for (uint32_t g = 0; g < numPossibleGroups; ++g) {
             auto& ids = grpIdToGroup[g];
+            uint32_t numSamples = 10;
             if (ids.empty()) {
                 samples[g] = {UINT32_MAX, UINT32_MAX};
-            }
-
-            uint32_t numSamples = 10;
-            if (ids.size() <= numSamples) {
+            } else if (ids.size() <= numSamples) {
                 // stupid case that should be fixed somewhere else!
                 samples[g] = ids.size() == 1 ? make_pair(ids[0], ids[0]) : make_pair(ids[0], ids[1]);
             } else {
