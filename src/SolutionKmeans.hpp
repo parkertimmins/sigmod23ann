@@ -914,7 +914,7 @@ struct SolutionKmeans {
         vector<vector<uint32_t>> groups;
         groups.reserve(globalGrpToIds.size());
         for (auto& [id, group] : globalGrpToIds) {
-            if (group.size() < 10'000) {
+            if (group.size() < 2'000) {
                 groups.push_back(group);
             } else {
                 std::cout << "too large: " << group.size() << "\n";
