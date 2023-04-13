@@ -243,27 +243,44 @@ struct SolutionKmeans {
         return globalGrpToIds;
     }
 
-    static vector<vector<uint32_t>> getPerGroupsSample(uint32_t numPossibleGroups, vector<vector<uint32_t>>& grpIdToGroup) {
-        vector<vector<uint32_t>> samples(numPossibleGroups);
+    static vector<pair<uint32_t, uint32_t>> getStartVecs(float points[][112], uint32_t numPossibleGroups, vector<vector<uint32_t>>& grpIdToGroup) {
+        vector<pair<uint32_t, uint32_t>> samples(numPossibleGroups);
         for (uint32_t g = 0; g < numPossibleGroups; ++g) {
             auto& ids = grpIdToGroup[g];
-            if (ids.empty()) { continue; }
+            if (ids.empty()) {
+                samples[g] = {UINT32_MAX, UINT32_MAX};
+            }
 
-            std::uniform_int_distribution<uint32_t> distribution(0, ids.size() - 1);
-            // stupid case that should be fixed somewhere else!
-            if (ids.size() <= 5) {
-                samples[g] = ids.size() == 1 ? vector{ids[0], ids[0]} : vector{ids[0], ids[1]};
+            uint32_t numSamples = 10;
+            if (ids.size() <= numSamples) {
+                // stupid case that should be fixed somewhere else!
+                samples[g] = ids.size() == 1 ? make_pair(ids[0], ids[0]) : make_pair(ids[0], ids[1]);
             } else {
-                uint32_t id1 = ids[distribution(rd)];
-                uint32_t id2;
-                do {
-                    id2 = ids[distribution(rd)];
-                } while (id1 == id2);
+                std::uniform_int_distribution<uint32_t> distribution(0, ids.size() - 1);
 
-                samples[g] = {id1, id2};
+                vector<uint32_t> sample;
+                sample.reserve(numSamples);
+                while (sample.size() < numSamples) {
+                    sample.push_back(ids[distribution(rd)]);
+                }
+
+                float maxDist = 0;
+                uint32_t idi, idj;
+                for (uint32_t i = 0; i < numSamples - 1; ++i) {
+                    for (uint32_t j = i + 1; j < numSamples; ++j) {
+                        float* pi = points[ids[i]];
+                        float* pj = points[ids[j]];
+                        float dist = distance(pi, pj);
+                        if (dist > maxDist) {
+                            maxDist = dist;
+                            idi = ids[i];
+                            idj = ids[j];
+                        }
+                    }
+                }
+                samples[g] = {idi, idj};
             }
         }
-
         return samples;
     }
 
@@ -304,7 +321,7 @@ struct SolutionKmeans {
             // Get samples for initial centers
             auto s1 = hclock::now();
             auto grpIdToGroup = depth == 0 ? std::move(singleGroup) : aggregateGroups(numPoints, numCurrGroups, id_to_group);
-            auto groupSamples = getPerGroupsSample(numCurrGroups, grpIdToGroup);
+            auto groupStarts = getStartVecs(points, numCurrGroups, grpIdToGroup);
             stage[1] += duration_cast<milliseconds>(hclock::now() - s1).count();
 
             // get centers and split plane from samples
@@ -312,13 +329,13 @@ struct SolutionKmeans {
             vector<pair<Vec, Vec>> groupCenters(numCurrGroups);
             vector<pair<float, Vec>> groupPlanes(numCurrGroups);;
             for (uint32_t g = 0; g < numCurrGroups; ++g) {
-                auto& sample = groupSamples[g];
-                if (sample.empty()) { continue; }
+                auto& starts = groupStarts[g];
+                if (starts.first == UINT32_MAX) { continue; }
 
                 Vec c1(100);
                 Vec c2(100);
-                for (uint32_t j = 0; j < 100; ++j) { c1[j] = points[sample[0]][j]; }
-                for (uint32_t j = 0; j < 100; ++j) { c2[j] = points[sample[1]][j]; }
+                for (uint32_t j = 0; j < 100; ++j) { c1[j] = points[starts.first][j]; }
+                for (uint32_t j = 0; j < 100; ++j) { c2[j] = points[starts.second][j]; }
                 groupCenters[g] = { c1, c2 };
 
                 auto between = scalarMult(0.5, add(c1, c2));
