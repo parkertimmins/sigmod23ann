@@ -328,8 +328,9 @@ struct SolutionKmeans {
 
 #ifdef PERF
             perf.stopCounters();
+            std::cout << "depth " << depth;
             std::cout << "sample start points\n";
-            perf.printReport(std::cout, 1);
+            perf.printReport(std::cout, 100'000);
             std::cout << std::endl;
             perf.startCounters();
 #endif
@@ -360,8 +361,9 @@ struct SolutionKmeans {
 
 #ifdef PERF
             perf.stopCounters();
+            std::cout << "depth " << depth;
             std::cout << "compute split planes\n";
-            perf.printReport(std::cout, 1);
+            perf.printReport(std::cout, 100'000);
             std::cout << std::endl;
             perf.startCounters();
 #endif
@@ -448,8 +450,9 @@ struct SolutionKmeans {
 
 #ifdef PERF
             perf.stopCounters();
+            std::cout << "depth " << depth;
             std::cout << "kmean iter loop\n";
-            perf.printReport(std::cout, 1);
+            perf.printReport(std::cout, 100'000);
             std::cout << std::endl;
             perf.startCounters();
 #endif
@@ -474,8 +477,9 @@ struct SolutionKmeans {
 
 #ifdef PERF
             perf.stopCounters();
+            std::cout << "depth " << depth;
             std::cout << "group split\n";
-            perf.printReport(std::cout, 1);
+            perf.printReport(std::cout, 100'000);
             std::cout << std::endl;
             perf.startCounters();
 #endif
