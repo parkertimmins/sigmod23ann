@@ -43,7 +43,7 @@ using std::pair;
 using std::vector;
 
 
-#define PERF
+///G#define PERF
 
 
 struct SolutionKmeans {
@@ -203,7 +203,7 @@ struct SolutionKmeans {
         return nodesUpdated.load();
     }
 
-    static vector<vector<uint32_t>> aggregateGroups(uint32_t numPoints, uint32_t numPossibleGroups, vector<uint32_t>& id_to_group) {
+    static vector<vector<vector<uint32_t>>> aggregateGroups(uint32_t numPoints, uint32_t numPossibleGroups, vector<uint32_t>& id_to_group) {
         uint32_t numThreads = std::thread::hardware_concurrency();
         auto ranges = splitRange({0, numPoints}, numThreads);
 
@@ -224,7 +224,7 @@ struct SolutionKmeans {
         }
         for (auto& thread: threads) { thread.join(); }
 
-        vector<vector<uint32_t>> globalGrpToIds(numPossibleGroups);
+        vector<vector<vector<uint32_t>>> globalGrpToIds(numPossibleGroups);
 
         auto numGroupingThreads = std::min(numThreads, numPossibleGroups);
         auto groupRanges = splitRange({0, numPossibleGroups}, numGroupingThreads);
@@ -234,10 +234,10 @@ struct SolutionKmeans {
             threads.emplace_back([&, t]() {
                 auto& gr = groupRanges[t];
                 for (uint32_t g = gr.first; g < gr.second; ++g) {
-                    auto& ids = globalGrpToIds[g];
-                    for (auto &local: localGrpToIds) {
+                    auto& groupSet = globalGrpToIds[g];
+                    for (auto& local: localGrpToIds) {
                         auto& idsLocal = local[g];
-                        ids.insert(ids.end(), idsLocal.begin(), idsLocal.end());
+                        groupSet.push_back(std::move(idsLocal));
                     }
                 }
             });
@@ -247,21 +247,35 @@ struct SolutionKmeans {
         return globalGrpToIds;
     }
 
-    static vector<pair<uint32_t, uint32_t>> getStartVecs(uint32_t idealGroupSize, float points[][112], uint32_t numPossibleGroups, vector<vector<uint32_t>>& grpIdToGroup) {
+    static vector<pair<uint32_t, uint32_t>> getStartVecs(uint32_t idealGroupSize, float points[][112], uint32_t numPossibleGroups, vector<vector<vector<uint32_t>>>& grpIdToGroup) {
         vector<pair<uint32_t, uint32_t>> samples(numPossibleGroups);
         uint32_t numSamples = 10;
         for (uint32_t g = 0; g < numPossibleGroups; ++g) {
-            auto& ids = grpIdToGroup[g];
-            if (ids.size() <= idealGroupSize) {
+            auto& idList = grpIdToGroup[g];
+
+            uint32_t numIds = 0;
+            for (auto& ids : idList) {
+                numIds += ids.size();
+            }
+            if (numIds <= idealGroupSize) {
                 // signifies that group is too small to split
                 samples[g] = {UINT32_MAX, UINT32_MAX};
             } else {
-                std::uniform_int_distribution<uint32_t> distribution(0, ids.size() - 1);
+                std::uniform_int_distribution<uint32_t> distribution(0, numIds - 1);
+
 
                 vector<uint32_t> sample;
                 sample.reserve(numSamples);
                 while (sample.size() < numSamples) {
-                    sample.push_back(ids[distribution(rd)]);
+                    uint32_t idx = distribution(rd);
+                    for (auto& ids : idList) {
+                        if (idx < ids.size()) {
+                            sample.push_back(ids[idx]);
+                            break;
+                        } else {
+                            idx -= ids.size();
+                        }
+                    }
                 }
 
                 float maxDist = 0;
@@ -310,9 +324,8 @@ struct SolutionKmeans {
         uint32_t maxDepth = requiredHashFuncs(numPoints, idealGroupSize);
         uint32_t numCurrGroups = 1;
 
-        vector<vector<uint32_t>> singleGroup(1);
-        singleGroup[0].resize(numPoints);
-        std::iota(singleGroup[0].begin(), singleGroup[0].end(), 0);
+        vector<vector<vector<uint32_t>>> singleGroup(1, vector<vector<uint32_t>>(1, vector<uint32_t>(numPoints)));
+        std::iota(singleGroup[0][0].begin(), singleGroup[0][0].end(), 0);
 
         for (uint32_t depth = 0; depth < maxDepth; ++depth) {
 
@@ -328,7 +341,7 @@ struct SolutionKmeans {
 
 #ifdef PERF
             perf.stopCounters();
-            std::cout << "depth " << depth;
+            std::cout << "depth " << depth << " ";
             std::cout << "sample start points\n";
             perf.printReport(std::cout, 100'000);
             std::cout << std::endl;
@@ -361,7 +374,7 @@ struct SolutionKmeans {
 
 #ifdef PERF
             perf.stopCounters();
-            std::cout << "depth " << depth;
+            std::cout << "depth " << depth << " ";
             std::cout << "compute split planes\n";
             perf.printReport(std::cout, 100'000);
             std::cout << std::endl;
@@ -450,7 +463,7 @@ struct SolutionKmeans {
 
 #ifdef PERF
             perf.stopCounters();
-            std::cout << "depth " << depth;
+            std::cout << "depth " << depth << " ";
             std::cout << "kmean iter loop\n";
             perf.printReport(std::cout, 100'000);
             std::cout << std::endl;
@@ -477,7 +490,7 @@ struct SolutionKmeans {
 
 #ifdef PERF
             perf.stopCounters();
-            std::cout << "depth " << depth;
+            std::cout << "depth " << depth << " ";
             std::cout << "group split\n";
             perf.printReport(std::cout, 100'000);
             std::cout << std::endl;
@@ -500,7 +513,12 @@ struct SolutionKmeans {
         uint32_t totalIdsSkipped = 0;
         uint32_t idsToProcess = 0;
         for (uint32_t g = 0; g < numCurrGroups; ++g) {
-            auto& group = globalGrpToIds[g];
+            auto& groupList = globalGrpToIds[g];
+            vector<uint32_t> group;
+            for (auto& grp: groupList) {
+                group.insert(group.end(), grp.begin(), grp.end());
+            }
+
             if (group.empty()) {
                 emptyGroups++;
             } else if (group.size() < 2'000) {
