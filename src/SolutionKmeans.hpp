@@ -546,20 +546,23 @@ struct SolutionKmeans {
         auto globalGrpToIds = aggregateGroups(numPoints, numCurrGroups, id_to_group);
         stage[7] += duration_cast<milliseconds>(hclock::now() - s7).count();
 
-        vector<vector<uint32_t>> groups;
-        groups.reserve(globalGrpToIds.size());
 
-        uint32_t groupsSkipped = 0;
-        uint32_t emptyGroups = 0;
-        uint32_t totalIdsSkipped = 0;
-        uint32_t idsToProcess = 0;
+        std::atomic<uint32_t> groupsSkipped = 0;
+        std::atomic<uint32_t> emptyGroups = 0;
+        std::atomic<uint32_t> totalIdsSkipped = 0;
+        std::atomic<uint32_t> idsToProcess = 0;
 
+        auto s16 = hclock::now();
         auto numGroupingThreads = std::min(numThreads, numCurrGroups);
         auto groupRanges = splitRange({0, numCurrGroups}, numGroupingThreads);
+        vector<vector<uint32_t>> groups;
+        groups.reserve(globalGrpToIds.size());
         vector<std::thread> threads;
+        vector<vector<vector<uint32_t>>> localGroups(groupRanges.size());
         for (uint32_t t = 0; t < numGroupingThreads; ++t) {
             threads.emplace_back([&, t]() {
                 auto& gr = groupRanges[t];
+                auto& groupsLocal = localGroups[t];
                 for (uint32_t g = gr.first; g < gr.second; ++g) {
                     auto& groupList = globalGrpToIds[g];
                     vector<uint32_t> group;
@@ -570,20 +573,24 @@ struct SolutionKmeans {
                     if (group.empty()) {
                         emptyGroups++;
                     } else if (group.size() < 2'000) {
-                        groups.push_back(group);
                         idsToProcess += group.size();
+                        groupsLocal.push_back(std::move(group));
                     } else {
                         groupsSkipped++;
-                        totalIdsSkipped+=group.size();
+                        totalIdsSkipped += group.size();
                     }
                 }
             });
         }
         for (auto& thread: threads) { thread.join(); }
+        for (auto& local : localGroups) {
+            groups.insert(groups.end(), local.begin(), local.end());
+        }
         std::cout << "num groups: " << groups.size() << "\n";
         std::cout << "num skipped groups: " << groupsSkipped << ", total size: " << totalIdsSkipped
             << ", avg size: " << static_cast<float>(totalIdsSkipped) / groupsSkipped << ", empty: " << emptyGroups <<  ", to process: " << idsToProcess << "\n";
         globalGrpToIds.clear();
+        stage[16] += duration_cast<milliseconds>(hclock::now() - s16).count();
         return groups;
     }
 
@@ -602,8 +609,8 @@ struct SolutionKmeans {
         vector<KnnSetScannableSimd> idToKnn(numPoints);
 
         uint32_t iteration = 0;
-        while (iteration < 10) {
-//        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
+//        while (iteration < 10) {
+        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
             std::cout << "Iteration: " << iteration << '\n';
 
             auto startGroup = hclock::now();
