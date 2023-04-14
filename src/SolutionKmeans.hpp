@@ -369,7 +369,7 @@ struct SolutionKmeans {
     inline static vector<long> stage;
 
     // handle both point vector data and array data
-    static pair<vector<uint32_t>, vector<tbb::concurrent_vector<uint32_t>>> splitKmeansNonRec(
+    static vector<tbb::concurrent_vector<uint32_t>> splitKmeansNonRec(
             uint32_t numPoints,
             uint32_t knnIterations,
             uint32_t idealGroupSize,
@@ -607,8 +607,6 @@ struct SolutionKmeans {
 
         auto s16 = hclock::now();
         vector<tbb::concurrent_vector<uint32_t>> groups;
-        vector<uint32_t> offsets;
-        uint32_t start = 0;
         for (auto& grp: globalGrpToIds) {
             if (grp.empty()) {
                 emptyGroups++;
@@ -616,10 +614,8 @@ struct SolutionKmeans {
                 groupsSkipped++;
                 totalIdsSkipped += grp.size();
             } else {
-                uint32_t end = start + grp.size();
+                idsToProcess += grp.size();
                 groups.push_back(std::move(grp));
-                offsets.push_back(start);
-                start = end;
             }
         }
         globalGrpToIds.clear();
@@ -627,7 +623,7 @@ struct SolutionKmeans {
         std::cout << "num skipped groups: " << groupsSkipped << ", total size: " << totalIdsSkipped
             << ", avg size: " << static_cast<float>(totalIdsSkipped) / groupsSkipped << ", empty: " << emptyGroups <<  ", to process: " << idsToProcess << "\n";
         stage[16] += duration_cast<milliseconds>(hclock::now() - s16).count();
-        return { std::move(offsets), std::move(groups) };
+        return groups;
     }
 
     static void constructResult(float points[][112], uint32_t numPoints, vector<vector<uint32_t>>& result) {
@@ -641,7 +637,6 @@ struct SolutionKmeans {
         std::cout << "start run with time bound: " << timeBoundsMs << '\n';
 
         auto startTime = hclock::now();
-        float (*pointsCopy)[112] = static_cast<float(*)[112]>(aligned_alloc(64, numPoints * 112 * sizeof(float)));
         vector<float> bounds(numPoints, std::numeric_limits<float>::max());
         vector<KnnSetScannableSimd> idToKnn(numPoints);
 
@@ -661,7 +656,7 @@ struct SolutionKmeans {
                 [&](tbb::blocked_range<uint32_t> r) {
                     for (uint32_t i = r.begin(); i < r.end(); ++i) {
                         if (!groups[i].empty()) {
-                            addCandidatesLessThan(points, pointsCopy, starts[i], groups[i], bounds, idToKnn);
+                            addCandidatesLessThan(points, groups[i], bounds, idToKnn);
                         }
                     }
                 }

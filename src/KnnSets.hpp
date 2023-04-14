@@ -303,22 +303,21 @@ void addCandidatesCopy(
 
 void addCandidatesLessThan(
         float points[][112],
-        float pointsCopy[][112],
-        uint32_t groupStart,
         tbb::concurrent_vector<uint32_t>& group,
         vector<float>& bounds,
         vector<KnnSetScannableSimd>& idToKnn) {
 
     uint32_t groupSize = group.size();
+    vector<float[112]> pointsCopy(groupSize);
     for (uint32_t i=0; i < groupSize; ++i) {
-        std::memcpy(pointsCopy[groupStart + i], points[group[i]], 100 * sizeof(float));
+        std::memcpy(pointsCopy[i], points[group[i]], 100 * sizeof(float));
     }
     for (uint32_t i = 0; i < groupSize-1; ++i) {
         auto id1 = group[i];
         auto& knn1 = idToKnn[id1];
         auto& bound1 = bounds[id1];
         for (uint32_t j=i+1; j < groupSize; ++j) {
-            float dist = distance(pointsCopy[groupStart + i], pointsCopy[groupStart + j]);
+            float dist = distance(pointsCopy[i], pointsCopy[j]);
             auto id2 = group[j];
             auto& knn2 = idToKnn[id2];
             auto& bound2 = bounds[id2];
