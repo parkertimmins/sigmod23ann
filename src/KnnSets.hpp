@@ -28,7 +28,6 @@ public:
     alignas(sizeof(__m256)) float dists[104] = { 0 };
     alignas(sizeof(__m256)) uint32_t current_ids[100] = {};
     uint32_t size = 0;
-    float lower_bound = 0; // 0 -> max val in first 100 -> decreases
     uint32_t lowerBoundIdx = -1;
     bool contains(uint32_t node) {
         for (uint32_t i = 0; i < size; ++i) {
@@ -91,25 +90,22 @@ public:
         return maxIdx;
     }
 
-    // This may misorder nodes of equal sizes
-    bool addCandidate(const uint32_t candidate_id, float dist) {
+    bool addCandidateLessThan(float& lower_bound, const uint32_t candidate_id, float dist) {
         if (size < k) {
             if (!contains(candidate_id)) {
-                auto idx = append(candidate_id, dist);
-                if (dist > lower_bound) {
-                    lower_bound = dist;
-                    lowerBoundIdx = idx;
+                append(candidate_id, dist);
+                if (size == k) {
+                    lowerBoundIdx = getMaxIdx();
+                    lower_bound = dists[lowerBoundIdx];
                 }
                 return true;
             }
-        } else if (dist < lower_bound) {
-            if (!containsFull(candidate_id)) {
-                dists[lowerBoundIdx] = dist;
-                current_ids[lowerBoundIdx] = candidate_id;
-                lowerBoundIdx = getMaxIdx();
-                lower_bound = dists[lowerBoundIdx];
-                return true;
-            }
+        } else if (!containsFull(candidate_id)) {
+            dists[lowerBoundIdx] = dist;
+            current_ids[lowerBoundIdx] = candidate_id;
+            lowerBoundIdx = getMaxIdx();
+            lower_bound = dists[lowerBoundIdx];
+            return true;
         }
         return false;
     }
@@ -129,7 +125,6 @@ public:
         return knn;
     }
 };
-
 
 
 
@@ -306,16 +301,34 @@ void addCandidatesCopy(
     }
 }
 
-vector<uint32_t> padResult(uint32_t numPoints, vector<vector<uint32_t>>& result) {
-    auto unusedId = 1;
-    vector<uint32_t> sizes(101);
-    for (uint32_t i=0; i < numPoints; ++i) {
-        sizes[result[i].size()]++;
-        while (result[i].size() < dims)  {
-            result[i].push_back(unusedId);
+void addCandidatesLessThan(
+        float points[][112],
+        vector<uint32_t>& group,
+        vector<float>& bounds,
+        vector<KnnSetScannableSimd>& idToKnn) {
+
+    uint32_t groupSize = group.size();
+    vector<float[112]> pointsCopy(groupSize);
+    for (uint32_t i=0; i < groupSize; ++i) {
+        std::memcpy(pointsCopy[i], points[group[i]], 100 * sizeof(float));
+    }
+    for (uint32_t i = 0; i < groupSize-1; ++i) {
+        auto id1 = group[i];
+        auto& knn1 = idToKnn[id1];
+        auto& bound1 = bounds[id1];
+        for (uint32_t j=i+1; j < groupSize; ++j) {
+            float dist = distance(pointsCopy[i], pointsCopy[j]);
+            auto id2 = group[j];
+            auto& knn2 = idToKnn[id2];
+            auto& bound2 = bounds[id2];
+            if (dist < bound1) {
+                knn1.addCandidateLessThan(bound1, id2, dist);
+            }
+            if (dist < bound2) {
+                knn2.addCandidateLessThan(bound2, id1, dist);
+            }
         }
     }
-    return sizes;
 }
 
 
@@ -340,6 +353,20 @@ void addCandidatesGroup(float points[][112],
         }
     }
 }
+
+vector<uint32_t> padResult(uint32_t numPoints, vector<vector<uint32_t>>& result) {
+    auto unusedId = 1;
+    vector<uint32_t> sizes(101);
+    for (uint32_t i=0; i < numPoints; ++i) {
+        sizes[result[i].size()]++;
+        while (result[i].size() < dims)  {
+            result[i].push_back(unusedId);
+        }
+    }
+    return sizes;
+}
+
+
 
 static bool contains(vector<uint32_t>& currIds, uint32_t candidateId) {
     __m256i pattern = _mm256_set1_epi32(static_cast<int>(candidateId));
