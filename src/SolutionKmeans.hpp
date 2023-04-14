@@ -646,7 +646,7 @@ struct SolutionKmeans {
             std::cout << "Iteration: " << iteration << '\n';
 
             auto startGroup = hclock::now();
-            auto [starts, groups] = splitKmeansNonRec(numPoints, 1, 400, points);
+            auto groups = splitKmeansNonRec(numPoints, 1, 400, points);
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
             std::cout << " group time: " << groupDuration << '\n';
 
