@@ -629,7 +629,7 @@ struct SolutionKmeans {
         for (auto& grp: globalGrpToIds) {
             if (grp.empty()) {
                 emptyGroups++;
-            } else if (grp.size() > 1'000) {
+            } else if (grp.size() > 2'000) {
                 groupsSkipped++;
                 totalIdsSkipped += grp.size();
             } else {
