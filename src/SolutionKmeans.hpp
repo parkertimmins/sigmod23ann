@@ -21,7 +21,6 @@
 #include <deque>
 #include <emmintrin.h>
 #include <immintrin.h>
-#include <oneapi/tbb/concurrent_vector.h>
 #include "oneapi/tbb.h"
 #include "Constants.hpp"
 #include "KnnSets.hpp"
@@ -220,11 +219,12 @@ struct SolutionKmeans {
 //        return nodesUpdated.load();
 //    }
 
-    static vector<tbb::concurrent_vector<uint32_t>> aggregateGroupsConcurrent(uint32_t numPoints, uint32_t numPossibleGroups, vector<uint32_t>& id_to_group) {
+    static vector<vector<uint32_t>> aggregateGroupsConcurrent(uint32_t numPoints, uint32_t numPossibleGroups, vector<uint32_t>& id_to_group) {
         uint32_t numThreads = std::thread::hardware_concurrency();
         auto ranges = splitRange({0, numPoints}, numThreads);
 
-        vector<tbb::concurrent_vector<uint32_t>> result(numPossibleGroups);
+        vector<Spinlock> locks(numPossibleGroups);
+        vector<vector<uint32_t>> result(numPossibleGroups);
         // convert id->grpId into grpId -> {id}
         vector<std::thread> threads;
         for (uint32_t t = 0; t < numThreads; ++t) {
@@ -232,7 +232,9 @@ struct SolutionKmeans {
                 auto r = ranges[t];
                 for (uint32_t i = r.first; i < r.second; ++i) {
                     auto g = id_to_group[i];
+                    locks[g].lock();
                     result[g].push_back(i);
+                    locks[g].unlock();
                 }
             });
         }
@@ -386,7 +388,7 @@ struct SolutionKmeans {
     inline static vector<long> stage;
 
     // handle both point vector data and array data
-    static vector<tbb::concurrent_vector<uint32_t>> splitKmeansNonRec(
+    static vector<vector<uint32_t>> splitKmeansNonRec(
             uint32_t numPoints,
             uint32_t knnIterations,
             uint32_t idealGroupSize,
@@ -623,7 +625,7 @@ struct SolutionKmeans {
         std::atomic<uint32_t> idsToProcess = 0;
 
         auto s16 = hclock::now();
-        vector<tbb::concurrent_vector<uint32_t>> groups;
+        vector<vector<uint32_t>> groups;
         for (auto& grp: globalGrpToIds) {
             if (grp.empty()) {
                 emptyGroups++;
@@ -672,9 +674,7 @@ struct SolutionKmeans {
                 tbb::blocked_range<uint32_t>(0, groups.size()),
                 [&](tbb::blocked_range<uint32_t> r) {
                     for (uint32_t i = r.begin(); i < r.end(); ++i) {
-                        if (!groups[i].empty()) {
-                            addCandidatesLessThan(points, groups[i], bounds, idToKnn);
-                        }
+                        addCandidatesLessThan(points, groups[i], bounds, idToKnn);
                     }
                 }
             );
@@ -691,7 +691,7 @@ struct SolutionKmeans {
             iteration++;
         }
 
-        topUpSingle(points, idToKnn, bounds);
+//        topUpSingle(points, idToKnn, bounds);
 
         for (uint32_t id = 0; id < numPoints; ++id) {
             result[id] = idToKnn[id].finalize();
