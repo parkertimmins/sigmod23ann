@@ -304,8 +304,8 @@ void addCandidatesCopy(
 void addCandidatesLessThan(
         float points[][112],
         float pointsCopy[][112],
-        uint32_t& groupStart,
-        vector<uint32_t>& group,
+        uint32_t groupStart,
+        tbb::concurrent_vector<uint32_t>& group,
         vector<float>& bounds,
         vector<KnnSetScannableSimd>& idToKnn) {
 
