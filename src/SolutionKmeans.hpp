@@ -121,8 +121,12 @@ struct SolutionKmeans {
                         sort(distIds.begin(), distIds.end());
                         for (uint32_t i = 0; i < 100; ++i) {
                             auto& [dist, id3] = distIds[i];
-                            if (knn1.addCandidateLessThan(bounds[id1], id3, dist)) {
-                                added++;
+                            if (dist < bounds[i]) {
+                                if (knn1.addCandidateLessThan(bounds[id1], id3, dist)) {
+                                    added++;
+                                }
+                            } else {
+                                break;
                             }
                         }
                     }
