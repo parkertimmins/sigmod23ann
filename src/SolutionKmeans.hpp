@@ -43,7 +43,7 @@ using std::pair;
 using std::vector;
 
 
-///G#define PERF
+#define PERF
 
 
 struct SolutionKmeans {
@@ -431,6 +431,15 @@ struct SolutionKmeans {
                 for (auto& thread: threads) { thread.join(); }
                 stage[3] += duration_cast<milliseconds>(hclock::now() - s3).count();
 
+#ifdef PERF
+            perf.stopCounters();
+            std::cout << "depth " << depth << " ";
+            std::cout << "kmeans iter, sum points either side split plane\n";
+            perf.printReport(std::cout, 100'000);
+            std::cout << std::endl;
+            perf.startCounters();
+#endif
+
 
                 // aggregate local results for split plane assignment
                 auto s4 = hclock::now();
@@ -448,6 +457,15 @@ struct SolutionKmeans {
                     }
                 }
                 stage[4] += duration_cast<milliseconds>(hclock::now() - s4).count();
+
+#ifdef PERF
+            perf.stopCounters();
+            std::cout << "depth " << depth << " ";
+            std::cout << "kmean iter, aggregate local split plane sums\n";
+            perf.printReport(std::cout, 100'000);
+            std::cout << std::endl;
+            perf.startCounters();
+#endif
 
                 auto s5 = hclock::now();
                 for (uint32_t g = 0; g < numCurrGroups; ++g) {
@@ -470,19 +488,18 @@ struct SolutionKmeans {
                     }
                 };
                 stage[5] += duration_cast<milliseconds>(hclock::now() - s5).count();
-            }
-
 
 #ifdef PERF
             perf.stopCounters();
             std::cout << "depth " << depth << " ";
-            std::cout << "kmean iter loop\n";
+            std::cout << "kmean iter, compute planes \n";
             perf.printReport(std::cout, 100'000);
             std::cout << std::endl;
             perf.startCounters();
 #endif
 
-            // recompute groups based on plane
+            }
+           // recompute groups based on plane
             auto s6 = hclock::now();
             vector<std::thread> threads;
             for (uint32_t t = 0; t < numThreads; ++t) {
