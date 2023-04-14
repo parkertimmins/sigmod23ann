@@ -553,23 +553,33 @@ struct SolutionKmeans {
         uint32_t emptyGroups = 0;
         uint32_t totalIdsSkipped = 0;
         uint32_t idsToProcess = 0;
-        for (uint32_t g = 0; g < numCurrGroups; ++g) {
-            auto& groupList = globalGrpToIds[g];
-            vector<uint32_t> group;
-            for (auto& grp: groupList) {
-                group.insert(group.end(), grp.begin(), grp.end());
-            }
 
-            if (group.empty()) {
-                emptyGroups++;
-            } else if (group.size() < 2'000) {
-                groups.push_back(group);
-                idsToProcess += group.size();
-            } else {
-                groupsSkipped++;
-                totalIdsSkipped+=group.size();
-            }
+        auto numGroupingThreads = std::min(numThreads, numCurrGroups);
+        auto groupRanges = splitRange({0, numCurrGroups}, numGroupingThreads);
+        vector<std::thread> threads;
+        for (uint32_t t = 0; t < numGroupingThreads; ++t) {
+            threads.emplace_back([&, t]() {
+                auto& gr = groupRanges[t];
+                for (uint32_t g = gr.first; g < gr.second; ++g) {
+                    auto& groupList = globalGrpToIds[g];
+                    vector<uint32_t> group;
+                    for (auto& grp: groupList) {
+                        group.insert(group.end(), grp.begin(), grp.end());
+                    }
+
+                    if (group.empty()) {
+                        emptyGroups++;
+                    } else if (group.size() < 2'000) {
+                        groups.push_back(group);
+                        idsToProcess += group.size();
+                    } else {
+                        groupsSkipped++;
+                        totalIdsSkipped+=group.size();
+                    }
+                }
+            });
         }
+        for (auto& thread: threads) { thread.join(); }
         std::cout << "num groups: " << groups.size() << "\n";
         std::cout << "num skipped groups: " << groupsSkipped << ", total size: " << totalIdsSkipped
             << ", avg size: " << static_cast<float>(totalIdsSkipped) / groupsSkipped << ", empty: " << emptyGroups <<  ", to process: " << idsToProcess << "\n";
