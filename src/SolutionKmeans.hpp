@@ -250,49 +250,61 @@ struct SolutionKmeans {
     static vector<pair<uint32_t, uint32_t>> getStartVecs(uint32_t idealGroupSize, float points[][112], uint32_t numPossibleGroups, vector<vector<vector<uint32_t>>>& grpIdToGroup) {
         vector<pair<uint32_t, uint32_t>> samples(numPossibleGroups);
         uint32_t numSamples = 10;
-        for (uint32_t g = 0; g < numPossibleGroups; ++g) {
-            auto& idList = grpIdToGroup[g];
 
-            uint32_t numIds = 0;
-            for (auto& ids : idList) {
-                numIds += ids.size();
-            }
-            if (numIds <= idealGroupSize) {
-                // signifies that group is too small to split
-                samples[g] = {UINT32_MAX, UINT32_MAX};
-            } else {
-                std::uniform_int_distribution<uint32_t> distribution(0, numIds - 1);
+        uint32_t numThreads = std::thread::hardware_concurrency();
+        auto numGroupingThreads = std::min(numThreads, numPossibleGroups);
+        auto groupRanges = splitRange({0, numPossibleGroups}, numGroupingThreads);
+        vector<std::thread> threads;
+        for (uint32_t t = 0; t < numGroupingThreads; ++t) {
+            threads.emplace_back([&, t]() {
+                auto& gr = groupRanges[t];
+                for (uint32_t g = gr.first; g < gr.second; ++g) {
+                   auto& idList = grpIdToGroup[g];
 
-
-                vector<uint32_t> sample;
-                sample.reserve(numSamples);
-                while (sample.size() < numSamples) {
-                    uint32_t idx = distribution(rd);
+                    uint32_t numIds = 0;
                     for (auto& ids : idList) {
-                        if (idx < ids.size()) {
-                            sample.push_back(ids[idx]);
-                            break;
-                        } else {
-                            idx -= ids.size();
-                        }
+                        numIds += ids.size();
                     }
-                }
+                    if (numIds <= idealGroupSize) {
+                        // signifies that group is too small to split
+                        samples[g] = {UINT32_MAX, UINT32_MAX};
+                    } else {
+                        std::uniform_int_distribution<uint32_t> distribution(0, numIds - 1);
 
-                float maxDist = 0;
-                uint32_t idi, idj;
-                for (uint32_t i = 0; i < numSamples - 1; ++i) {
-                    for (uint32_t j = i + 1; j < numSamples; ++j) {
-                        float dist = distance(points[sample[i]], points[sample[j]]);
-                        if (dist > maxDist) {
-                            maxDist = dist;
-                            idi = sample[i];
-                            idj = sample[j];
+                        vector<uint32_t> sample;
+                        sample.reserve(numSamples);
+                        while (sample.size() < numSamples) {
+                            uint32_t idx = distribution(rd);
+                            for (auto& ids : idList) {
+                                if (idx < ids.size()) {
+                                    sample.push_back(ids[idx]);
+                                    break;
+                                } else {
+                                    idx -= ids.size();
+                                }
+                            }
                         }
+
+                        float maxDist = 0;
+                        uint32_t idi, idj;
+                        for (uint32_t i = 0; i < numSamples - 1; ++i) {
+                            for (uint32_t j = i + 1; j < numSamples; ++j) {
+                                float dist = distance(points[sample[i]], points[sample[j]]);
+                                if (dist > maxDist) {
+                                    maxDist = dist;
+                                    idi = sample[i];
+                                    idj = sample[j];
+                                }
+                            }
+                        }
+                        samples[g] = {idi, idj};
                     }
+
+
                 }
-                samples[g] = {idi, idj};
-            }
+            });
         }
+        for (auto& thread: threads) { thread.join(); }
         return samples;
     }
 
