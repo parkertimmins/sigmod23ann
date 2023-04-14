@@ -247,6 +247,34 @@ struct SolutionKmeans {
         return globalGrpToIds;
     }
 
+    static vector<pair<uint32_t, uint32_t>> getStartVecsDepth0(uint32_t numPoints, float points[][112], uint32_t numPossibleGroups) {
+        vector<pair<uint32_t, uint32_t>> samples(numPossibleGroups);
+        uint32_t numSamples = 10;
+
+        std::uniform_int_distribution<uint32_t> distribution(0, numPoints - 1);
+
+        vector<uint32_t> sample;
+        sample.reserve(numSamples);
+        while (sample.size() < numSamples) {
+            sample.push_back(distribution(rd));
+        }
+
+        float maxDist = 0;
+        uint32_t idi, idj;
+        for (uint32_t i = 0; i < numSamples - 1; ++i) {
+            for (uint32_t j = i + 1; j < numSamples; ++j) {
+                float dist = distance(points[sample[i]], points[sample[j]]);
+                if (dist > maxDist) {
+                    maxDist = dist;
+                    idi = sample[i];
+                    idj = sample[j];
+                }
+            }
+        }
+        samples[0] = {idi, idj};
+        return samples;
+    }
+
     static vector<pair<uint32_t, uint32_t>> getStartVecs(uint32_t idealGroupSize, float points[][112], uint32_t numPossibleGroups, vector<vector<vector<uint32_t>>>& grpIdToGroup) {
         vector<pair<uint32_t, uint32_t>> samples(numPossibleGroups);
         uint32_t numSamples = 10;
@@ -336,9 +364,6 @@ struct SolutionKmeans {
         uint32_t numCurrGroups = 1;
 
         auto s0 = hclock::now();
-        vector<vector<vector<uint32_t>>> singleGroup(1, vector<vector<uint32_t>>(1, vector<uint32_t>(numPoints)));
-        std::iota(singleGroup[0][0].begin(), singleGroup[0][0].end(), 0);
-        stage[0] += duration_cast<milliseconds>(hclock::now() - s0).count();
 
         for (uint32_t depth = 0; depth < maxDepth; ++depth) {
 
@@ -348,8 +373,14 @@ struct SolutionKmeans {
             perf.startCounters();
 #endif
             auto s1 = hclock::now();
-            auto grpIdToGroup = depth == 0 ? std::move(singleGroup) : aggregateGroups(numPoints, numCurrGroups, id_to_group);
-            auto groupStarts = getStartVecs(idealGroupSize, points, numCurrGroups, grpIdToGroup);
+
+            vector<pair<uint32_t, uint32_t>> groupStarts;
+            if (depth == 0) {
+                groupStarts = getStartVecsDepth0(numPoints, points, numCurrGroups);
+            } else {
+                auto grpIdToGroup = aggregateGroups(numPoints, numCurrGroups, id_to_group);
+                groupStarts = getStartVecs(idealGroupSize, points, numCurrGroups, grpIdToGroup);
+            }
             stage[1] += duration_cast<milliseconds>(hclock::now() - s1).count();
 
 #ifdef PERF
