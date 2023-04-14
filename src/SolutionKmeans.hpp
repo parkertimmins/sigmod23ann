@@ -86,6 +86,7 @@ struct SolutionKmeans {
             tbb::blocked_range<size_t>(0, numPoints),
             [&](oneapi::tbb::blocked_range<size_t> r) {
                 tsl::robin_set<uint32_t> candidates;
+                vector<pair<float, uint32_t>> distIds;
                 for (auto id1 = r.begin(); id1 < r.end(); ++id1) {
                     uint32_t added = 0;
                     auto& knn = knnIds[id1];
@@ -100,13 +101,34 @@ struct SolutionKmeans {
 //                    for (auto& id2 : knnIds[id1]) { candidates.erase(id2); }
                     candidates.erase(id1);
 
+
+                    distIds.reserve(candidates.size());
+                    float lower_bound = bounds[id1];
                     for (auto& id3 : candidates) {
                         float dist = distance(points[id3], points[id1]);
-                        if (knn1.addCandidateLessThan(bounds[id1], id3, dist)) {
-                            added++;
+                        if (dist < lower_bound) {
+                            distIds.emplace_back(dist, id3);
                         }
                     }
+
+                    if (distIds.size() < 100) {
+                        for (auto& [dist, id3] : distIds)  {
+                            if (knn1.addCandidateLessThan(bounds[id1], id3, dist)) {
+                                added++;
+                            }
+                        }
+                    } else {
+                        sort(distIds.begin(), distIds.end());
+                        for (uint32_t i = 0; i < 100; ++i) {
+                            auto& [dist, id3] = distIds[i];
+                            if (knn1.addCandidateLessThan(bounds[id1], id3, dist)) {
+                                added++;
+                            }
+                        }
+                    }
+
                     candidates.clear();
+                    distIds.clear();
 
                     auto currCount = count++;
                     if (currCount % 10'000 == 0) {
