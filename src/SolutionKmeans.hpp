@@ -295,7 +295,7 @@ struct SolutionKmeans {
         return samples;
     }
 
-    static vector<pair<uint32_t, uint32_t>> getStartVecs(uint32_t idealGroupSize, float points[][112], uint32_t numPossibleGroups, vector<vector<vector<uint32_t>>>& grpIdToGroup) {
+    static vector<pair<uint32_t, uint32_t>> getStartVecs(uint32_t idealGroupSize, float points[][112], uint32_t numPossibleGroups, vector<tbb::concurrent_vector<uint32_t>>& grpIdToGroup) {
         vector<pair<uint32_t, uint32_t>> samples(numPossibleGroups);
         uint32_t numSamples = 10;
 
@@ -307,30 +307,18 @@ struct SolutionKmeans {
             threads.emplace_back([&, t]() {
                 auto& gr = groupRanges[t];
                 for (uint32_t g = gr.first; g < gr.second; ++g) {
-                   auto& idList = grpIdToGroup[g];
+                   auto& ids = grpIdToGroup[g];
 
-                    uint32_t numIds = 0;
-                    for (auto& ids : idList) {
-                        numIds += ids.size();
-                    }
-                    if (numIds <= idealGroupSize) {
+                    if (ids.size() <= idealGroupSize) {
                         // signifies that group is too small to split
                         samples[g] = {UINT32_MAX, UINT32_MAX};
                     } else {
-                        std::uniform_int_distribution<uint32_t> distribution(0, numIds - 1);
+                        std::uniform_int_distribution<uint32_t> distribution(0, ids.size() - 1);
 
                         vector<uint32_t> sample;
                         sample.reserve(numSamples);
                         while (sample.size() < numSamples) {
-                            uint32_t idx = distribution(rd);
-                            for (auto& ids : idList) {
-                                if (idx < ids.size()) {
-                                    sample.push_back(ids[idx]);
-                                    break;
-                                } else {
-                                    idx -= ids.size();
-                                }
-                            }
+                            sample.push_back(ids[distribution(rd)]);
                         }
 
                         float maxDist = 0;
@@ -398,7 +386,7 @@ struct SolutionKmeans {
             if (depth == 0) {
                 groupStarts = getStartVecsDepth0(numPoints, points, numCurrGroups);
             } else {
-                auto grpIdToGroup = aggregateGroups(numPoints, numCurrGroups, id_to_group);
+                auto grpIdToGroup = aggregateGroupsConcurrent(numPoints, numCurrGroups, id_to_group);
                 groupStarts = getStartVecs(idealGroupSize, points, numCurrGroups, grpIdToGroup);
             }
             stage[1] += duration_cast<milliseconds>(hclock::now() - s1).count();
