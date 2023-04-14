@@ -4,13 +4,13 @@ project(sigmod23ann)
 set(CMAKE_CXX_STANDARD 20)
 
 
-include(FetchContent)
-FetchContent_Declare(
-        googletest
-        # Specify the commit you depend on and update it regularly.
-        URL https://github.com/google/googletest/archive/release-1.12.1.zip
-)
-FetchContent_MakeAvailable(googletest)
+#include(FetchContent)
+#FetchContent_Declare(
+#        googletest
+#        # Specify the commit you depend on and update it regularly.
+#        URL https://github.com/google/googletest/archive/release-1.12.1.zip
+#)
+#FetchContent_MakeAvailable(googletest)
 
 find_package(TBB REQUIRED)
 
@@ -30,9 +30,9 @@ target_link_libraries(lib_ann tsl::robin_map)
 add_executable(sigmod23ann src/main.cpp)
 target_link_libraries(sigmod23ann lib_ann TBB::tbb tsl::robin_map)
 
-file(GLOB testFiles "test/*.hpp" "test/*.cpp")
-add_executable(tests test/TestMain.cpp ${testFiles})
-target_link_libraries(tests gtest gtest_main lib_ann TBB::tbb)
+#file(GLOB testFiles "test/*.hpp" "test/*.cpp")
+#add_executable(tests test/TestMain.cpp ${testFiles})
+#target_link_libraries(tests gtest gtest_main lib_ann TBB::tbb)
 
 file(GLOB srcFiles "src/*.hpp" "src/*.cpp")
 add_executable(grader src/grade.cpp src/Constants.hpp)
