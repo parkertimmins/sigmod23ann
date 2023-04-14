@@ -101,7 +101,6 @@ struct SolutionKmeans {
 //                    for (auto& id2 : knnIds[id1]) { candidates.erase(id2); }
                     candidates.erase(id1);
 
-
                     distIds.reserve(candidates.size());
                     float lower_bound = bounds[id1];
                     for (auto& id3 : candidates) {
@@ -129,7 +128,7 @@ struct SolutionKmeans {
                     auto currCount = count++;
                     if (currCount % 10'000 == 0) {
                         auto topupTime = duration_cast<milliseconds>(hclock::now() - startTopup).count();
-                        std::cout << "topped up: " << currCount << ", timing topping up:" << topupTime << "\n";
+                        std::cout << "topped up: " << currCount << ", timing topping up:" << topupTime << ", nodes added: " << nodesAdded << ", nodes changed: " << nodesUpdated << "\n";
                     }
                     if (added > 0) {
                         nodesUpdated++;
