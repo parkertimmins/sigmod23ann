@@ -321,7 +321,7 @@ struct SolutionKmeans {
     inline static vector<long> stage;
 
     // handle both point vector data and array data
-    static vector<vector<uint32_t>> splitKmeansNonRec(
+    static pair<vector<uint32_t>, vector<vector<uint32_t>>> splitKmeansNonRec(
             uint32_t numPoints,
             uint32_t knnIterations,
             uint32_t idealGroupSize,
@@ -335,8 +335,10 @@ struct SolutionKmeans {
         uint32_t maxDepth = requiredHashFuncs(numPoints, idealGroupSize);
         uint32_t numCurrGroups = 1;
 
+        auto s0 = hclock::now();
         vector<vector<vector<uint32_t>>> singleGroup(1, vector<vector<uint32_t>>(1, vector<uint32_t>(numPoints)));
         std::iota(singleGroup[0][0].begin(), singleGroup[0][0].end(), 0);
+        stage[0] += duration_cast<milliseconds>(hclock::now() - s0).count();
 
         for (uint32_t depth = 0; depth < maxDepth; ++depth) {
 
@@ -582,16 +584,24 @@ struct SolutionKmeans {
                 }
             });
         }
+
+        vector<uint32_t> offsets;
         for (auto& thread: threads) { thread.join(); }
+        uint32_t start = 0;
         for (auto& local : localGroups) {
-            groups.insert(groups.end(), local.begin(), local.end());
+            for (auto& localGroup : local) {
+                uint32_t end = start + localGroups.size();
+                groups.push_back(std::move(localGroup));
+                offsets.push_back(start);
+                start = end;
+            }
         }
         std::cout << "num groups: " << groups.size() << "\n";
         std::cout << "num skipped groups: " << groupsSkipped << ", total size: " << totalIdsSkipped
             << ", avg size: " << static_cast<float>(totalIdsSkipped) / groupsSkipped << ", empty: " << emptyGroups <<  ", to process: " << idsToProcess << "\n";
         globalGrpToIds.clear();
         stage[16] += duration_cast<milliseconds>(hclock::now() - s16).count();
-        return groups;
+        return { std::move(offsets), std::move(groups) };
     }
 
     static void constructResult(float points[][112], uint32_t numPoints, vector<vector<uint32_t>>& result) {
@@ -605,6 +615,7 @@ struct SolutionKmeans {
         std::cout << "start run with time bound: " << timeBoundsMs << '\n';
 
         auto startTime = hclock::now();
+        float (*pointsCopy)[112] = static_cast<float(*)[112]>(aligned_alloc(64, numPoints * 112 * sizeof(float)));
         vector<float> bounds(numPoints, std::numeric_limits<float>::max());
         vector<KnnSetScannableSimd> idToKnn(numPoints);
 
@@ -614,7 +625,7 @@ struct SolutionKmeans {
             std::cout << "Iteration: " << iteration << '\n';
 
             auto startGroup = hclock::now();
-            auto groups = splitKmeansNonRec(numPoints, 1, 400, points);
+            auto [starts, groups] = splitKmeansNonRec(numPoints, 1, 400, points);
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroup).count();
             std::cout << " group time: " << groupDuration << '\n';
 
@@ -623,7 +634,7 @@ struct SolutionKmeans {
                 tbb::blocked_range<uint32_t>(0, groups.size()),
                 [&](tbb::blocked_range<uint32_t> r) {
                     for (uint32_t i = r.begin(); i < r.end(); ++i) {
-                        addCandidatesLessThan(points, groups[i], bounds, idToKnn);
+                        addCandidatesLessThan(points, pointsCopy, starts[i], groups[i], bounds, idToKnn);
                     }
                 }
             );
