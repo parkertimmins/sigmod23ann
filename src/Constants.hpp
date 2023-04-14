@@ -6,7 +6,7 @@
 #include <random>
 #include <boost/align/aligned_allocator.hpp>
 #include <immintrin.h>
-
+#include <thread>
 
 
 using Range = std::pair<uint32_t, uint32_t>;
@@ -19,7 +19,8 @@ using Vec = aligned_vector<float>;
 
 #define PRINT_OUTPUT
 
-thread_local std::mt19937 rd(1234);
+std::hash<std::thread::id> hasher;
+thread_local std::mt19937 rd(clock() + hasher(std::this_thread::get_id()));
 const uint32_t dims = 100;
 const uint32_t k = 100;
 
