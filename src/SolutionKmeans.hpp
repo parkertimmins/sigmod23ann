@@ -43,7 +43,7 @@ using std::pair;
 using std::vector;
 
 
-#define PERF
+//#define PERF
 
 
 struct SolutionKmeans {
@@ -440,22 +440,30 @@ struct SolutionKmeans {
             perf.startCounters();
 #endif
 
-
                 // aggregate local results for split plane assignment
                 auto s4 = hclock::now();
+                auto numGroupingThreads = std::min(numThreads, numCurrGroups);
+                auto groupRanges = splitRange({0, numCurrGroups}, numGroupingThreads);
                 vector<pair<centroid_agg, centroid_agg>> globalCenterAggs(numCurrGroups, { { 0, std::array<float, 100>() }, { 0, std::array<float, 100>() } });
-                for (auto& local : localGroupCenterAggs) {
-                    for (uint32_t g = 0; g < numCurrGroups; ++g) {
-                        if (shouldSplit[g]) {
-                            auto& ca = local[g];
-                            auto& [c1, c2] = globalCenterAggs[g];
-                            c1.first += ca.first.first;
-                            c2.first += ca.second.first;
-                            for (uint32_t j = 0; j < dims; ++j) { c1.second[j] += ca.first.second[j]; }
-                            for (uint32_t j = 0; j < dims; ++j) { c2.second[j] += ca.second.second[j]; }
+                threads.clear();
+                for (uint32_t t = 0; t < numGroupingThreads; ++t) {
+                    threads.emplace_back([&, t]() {
+                        auto& gr = groupRanges[t];
+                        for (uint32_t g = gr.first; g < gr.second; ++g) {
+                            if (shouldSplit[g]) {
+                                for (auto& local : localGroupCenterAggs) {
+                                    auto& ca = local[g];
+                                    auto& [c1, c2] = globalCenterAggs[g];
+                                    c1.first += ca.first.first;
+                                    c2.first += ca.second.first;
+                                    for (uint32_t j = 0; j < dims; ++j) { c1.second[j] += ca.first.second[j]; }
+                                    for (uint32_t j = 0; j < dims; ++j) { c2.second[j] += ca.second.second[j]; }
+                                }
+                            }
                         }
-                    }
+                    });
                 }
+                for (auto& thread: threads) { thread.join(); }
                 stage[4] += duration_cast<milliseconds>(hclock::now() - s4).count();
 
 #ifdef PERF
@@ -468,25 +476,30 @@ struct SolutionKmeans {
 #endif
 
                 auto s5 = hclock::now();
-                for (uint32_t g = 0; g < numCurrGroups; ++g) {
-                    if (shouldSplit[g]) {
-                        auto& center_aggs = globalCenterAggs[g];
-                        auto& [center1, center2] = groupCenters[g];
-                        auto& [c1_agg, c2_agg] = center_aggs;
+                threads.clear();
+                for (uint32_t t = 0; t < numGroupingThreads; ++t) {
+                    threads.emplace_back([&, t]() {
+                        auto& gr = groupRanges[t];
+                        for (uint32_t g = gr.first; g < gr.second; ++g) {
+                            if (shouldSplit[g]) {
+                                auto& center_aggs = globalCenterAggs[g];
+                                auto& [center1, center2] = groupCenters[g];
+                                auto& [c1_agg, c2_agg] = center_aggs;
 
-                        if (c1_agg.first == 0 || c2_agg.first == 0) {
-                            continue;
+                                if (c1_agg.first == 0 || c2_agg.first == 0) { continue; }
+                                for (uint32_t i = 0; i < dims; ++i) {
+                                    center1[i] = c1_agg.second[i] / c1_agg.first;
+                                    center2[i] = c2_agg.second[i] / c2_agg.first;
+                                }
+                                auto between = scalarMult(0.5, add(center1, center2));
+                                auto coefs = sub(center1, between);
+                                auto offset = dot(between.data(), coefs.data());
+                                groupPlanes[g] = { offset, coefs };
+                            }
                         }
-                        for (uint32_t i = 0; i < dims; ++i) {
-                            center1[i] = c1_agg.second[i] / c1_agg.first;
-                            center2[i] = c2_agg.second[i] / c2_agg.first;
-                        }
-                        auto between = scalarMult(0.5, add(center1, center2));
-                        auto coefs = sub(center1, between);
-                        auto offset = dot(between.data(), coefs.data());
-                        groupPlanes[g] = { offset, coefs };
-                    }
-                };
+                    });
+                }
+                for (auto& thread: threads) { thread.join(); }
                 stage[5] += duration_cast<milliseconds>(hclock::now() - s5).count();
 
 #ifdef PERF
