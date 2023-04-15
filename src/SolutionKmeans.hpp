@@ -559,7 +559,7 @@ struct SolutionKmeans {
 
         bool localRun = getenv("LOCAL_RUN");
         auto numThreads = std::thread::hardware_concurrency();
-        long timeBoundMs = (localRun || numPoints == 10'000)  ? 20'000 : 1'150'000;
+        long timeBoundMs = (localRun || numPoints == 10'000)  ? 20'000 : 1'210'000;
         long topUp = (localRun || numPoints == 10'000)  ? 20'000 : 500'000;
         long timeBoundTopUp = timeBoundMs + topUp;
 
