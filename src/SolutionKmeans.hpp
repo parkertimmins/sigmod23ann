@@ -390,7 +390,7 @@ struct SolutionKmeans {
 //        return nodesUpdated.load();
 //    }
 
-    static uint64_t topUpSingle(float points[][112], vector<KnnSetScannableSimd>& idToKnn, vector<float>& bounds, auto startTime) {
+    static uint64_t topUpSingleOrdered(float points[][112], vector<KnnSetScannableSimd>& idToKnn, vector<float>& bounds, long timeBoundMs, auto startTime) {
         auto startTopup = hclock::now();
         uint32_t numPoints = idToKnn.size();
 
@@ -425,6 +425,10 @@ struct SolutionKmeans {
         tbb::parallel_for(
                 tbb::blocked_range<size_t>(0, numPoints),
                 [&](oneapi::tbb::blocked_range<size_t> r) {
+                    if (duration_cast<milliseconds>(hclock::now() - startTime).count() >= timeBoundMs) {
+                        return;
+                    }
+
                     tsl::robin_set<uint32_t> candidates;
                     for (auto id1 = r.begin(); id1 < r.end(); ++id1) {
                         uint32_t added = 0;
@@ -469,16 +473,92 @@ struct SolutionKmeans {
         return nodesUpdated.load();
     }
 
+
+    static uint64_t topUpSingle(float points[][112], vector<KnnSetScannableSimd>& idToKnn, vector<float>& bounds, long timeBoundMs, auto startTime) {
+        auto startTopup = hclock::now();
+        uint32_t numPoints = idToKnn.size();
+
+        std::atomic<uint64_t> nodesUpdated = 0;
+        std::atomic<uint64_t> nodesAdded = 0;
+
+        vector<vector<uint32_t>> knnIds(numPoints);
+        tbb::parallel_for(
+            tbb::blocked_range<size_t>(0, numPoints),
+            [&](oneapi::tbb::blocked_range<size_t> r) {
+                for (auto id = r.begin(); id < r.end(); ++id) {
+                    vector<uint32_t> ids;
+                    ids.reserve(100);
+                    for (auto& id2 : idToKnn[id].current_ids) {
+                        ids.push_back(id2);
+                    }
+                    std::sort(ids.begin(), ids.end());
+                    knnIds[id] = std::move(ids);
+                }
+            }
+        );
+
+        std::cout << "top copy idKnnSet time: " << duration_cast<milliseconds>(hclock::now() - startTopup).count() << "\n";
+
+        std::atomic<uint32_t> count = 0;
+        tbb::parallel_for(
+                tbb::blocked_range<size_t>(0, numPoints),
+                [&](oneapi::tbb::blocked_range<size_t> r) {
+                    if (duration_cast<milliseconds>(hclock::now() - startTime).count() >= timeBoundMs) {
+                        return;
+                    }
+
+                    tsl::robin_set<uint32_t> candidates;
+                    for (auto id1 = r.begin(); id1 < r.end(); ++id1) {
+                        uint32_t added = 0;
+                        auto& knn = knnIds[id1];
+                        auto& knn1 = idToKnn[id1];
+                        for (auto& id2 : knnIds[id1]) {
+                            for (auto& id3 : knnIds[id2]) {
+                                candidates.insert(id3);
+                            }
+                        }
+
+                        // remove current ids and self id
+//                    for (auto& id2 : knnIds[id1]) { candidates.erase(id2); }
+                        candidates.erase(id1);
+
+                        for (auto& id3 : candidates) {
+                            float dist = distance(points[id3], points[id1]);
+                            if (knn1.addCandidateLessThan(bounds[id1], id3, dist)) {
+                                added++;
+                            }
+                        }
+                        candidates.clear();
+
+                        auto currCount = count++;
+                        if (currCount % 10'000 == 0) {
+                            auto topupTime = duration_cast<milliseconds>(hclock::now() - startTopup).count();
+                            std::cout << "topped up: " << currCount << ", timing topping up:" << topupTime << ", nodes added: " << nodesAdded << ", nodes changed: " << nodesUpdated << "\n";
+                        }
+                        if (added > 0) {
+                            nodesUpdated++;
+                            nodesAdded += added;
+                        }
+                    }
+                }
+        );
+
+        std::cout << "topUp nodes added: " << nodesAdded << "\n";
+        std::cout << "topUp nodes changed: " << nodesUpdated << "\n";
+        return nodesUpdated.load();
+    }
+
+
     static void constructResult(float points[][112], uint32_t numPoints, vector<vector<uint32_t>>& result) {
 
         bool localRun = getenv("LOCAL_RUN");
         auto numThreads = std::thread::hardware_concurrency();
-        long timeBoundsMs = (localRun || numPoints == 10'000)  ? 20'000 : 1'150'000;
+        long timeBoundMs = (localRun || numPoints == 10'000)  ? 60'000 : 1'150'000;
 
 
         float (*pointsCopy)[112] = static_cast<float(*)[112]>(aligned_alloc(64, numPoints * 112 * sizeof(float)));
 
-        std::cout << "start run with time bound: " << timeBoundsMs << '\n';
+        std::cout << "start run with time bound: " << timeBoundMs << '\n';
 
         auto startTime = hclock::now();
         vector<KnnSetScannableSimd> idToKnn(numPoints);
@@ -489,8 +569,8 @@ struct SolutionKmeans {
 
 
         uint32_t iteration = 0;
-//        while (iteration < 5) {
-        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundsMs) {
+        while (iteration < 3) {
+//        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundMs) {
             std::cout << "Iteration: " << iteration << '\n';
 
             std::iota(indices.begin(), indices.end(), 0);
@@ -508,7 +588,7 @@ struct SolutionKmeans {
             iteration++;
         }
 
-        topUpSingle(points, idToKnn, bounds, startTime);
+        topUpSingle(points, idToKnn, bounds, timeBoundMs, startTime);
 
         for (uint32_t id = 0; id < numPoints; ++id) {
             result[id] = idToKnn[id].finalize();
