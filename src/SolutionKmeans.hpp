@@ -449,8 +449,11 @@ struct SolutionKmeans {
 
                         for (auto& id3 : candidates) {
                             float dist = distance(points[id3], points[id1]);
-                            if (knn1.addCandidateLessThan(bounds[id1], id3, dist)) {
-                                added++;
+                            float& bound = bounds[id1];
+                            if (dist < bound) {
+                                if (knn1.addCandidateLessThan(bound, id3, dist)) {
+                                    added++;
+                                }
                             }
                         }
                         candidates.clear();
