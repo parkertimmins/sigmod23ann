@@ -579,9 +579,18 @@ struct SolutionKmeans {
         while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundMs) {
             std::cout << "Iteration: " << iteration << '\n';
 
+            uint32_t maxBucketSize;
+            if (iteration % 3 == 0) {
+                maxBucketSize = 200;
+            } else if (iteration % 3 == 1) {
+                maxBucketSize = 400;
+            } else {
+                maxBucketSize = 800;
+            }
+
             std::iota(indices.begin(), indices.end(), 0);
             auto startGroupProcess = hclock::now();
-            splitKmeansBinaryProcess({0, numPoints}, 1, 400, points, pointsCopy, indices, idToKnn, bounds);
+            splitKmeansBinaryProcess({0, numPoints}, 1, maxBucketSize, points, pointsCopy, indices, idToKnn, bounds);
 
             auto groupDuration = duration_cast<milliseconds>(hclock::now() - startGroupProcess).count();
             std::cout << " group/process time: " << groupDuration << '\n';
