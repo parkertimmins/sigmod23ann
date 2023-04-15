@@ -553,12 +553,13 @@ struct SolutionKmeans {
 
         bool localRun = getenv("LOCAL_RUN");
         auto numThreads = std::thread::hardware_concurrency();
-        long timeBoundMs = (localRun || numPoints == 10'000)  ? 60'000 : 1'150'000;
-
+        long timeBoundMs = (localRun || numPoints == 10'000)  ? 20'000 : 1'150'000;
+        long topUp = (localRun || numPoints == 10'000)  ? 20'000 : 500'000;
+        long timeBoundTopUp = timeBoundMs + topUp;
 
         float (*pointsCopy)[112] = static_cast<float(*)[112]>(aligned_alloc(64, numPoints * 112 * sizeof(float)));
 
-        std::cout << "start run with time bound: " << timeBoundMs << '\n';
+        std::cout << "start run with time bound: " << timeBoundMs << ", topUp bound: " << timeBoundTopUp << "\n";
 
         auto startTime = hclock::now();
         vector<KnnSetScannableSimd> idToKnn(numPoints);
@@ -569,8 +570,7 @@ struct SolutionKmeans {
 
 
         uint32_t iteration = 0;
-        while (iteration < 3) {
-//        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundMs) {
+        while (duration_cast<milliseconds>(hclock::now() - startTime).count() < timeBoundMs) {
             std::cout << "Iteration: " << iteration << '\n';
 
             std::iota(indices.begin(), indices.end(), 0);
@@ -588,7 +588,7 @@ struct SolutionKmeans {
             iteration++;
         }
 
-        topUpSingle(points, idToKnn, bounds, timeBoundMs, startTime);
+        topUpSingle(points, idToKnn, bounds, timeBoundTopUp, startTime);
 
         for (uint32_t id = 0; id < numPoints; ++id) {
             result[id] = idToKnn[id].finalize();
