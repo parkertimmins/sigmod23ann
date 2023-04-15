@@ -580,12 +580,10 @@ struct SolutionKmeans {
             std::cout << "Iteration: " << iteration << '\n';
 
             uint32_t maxBucketSize;
-            if (iteration % 3 == 0) {
+            if (iteration % 2 == 0) {
                 maxBucketSize = 200;
-            } else if (iteration % 3 == 1) {
+            } else if (iteration % 2 == 1) {
                 maxBucketSize = 400;
-            } else {
-                maxBucketSize = 800;
             }
 
             std::iota(indices.begin(), indices.end(), 0);
