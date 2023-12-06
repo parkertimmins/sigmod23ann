@@ -1,14 +1,11 @@
 #!/bin/bash
 
-#make clean
-#make
-#./knng
 
 
 mkdir -p build
 cd build
-cmake ..
+time cmake ..
 make clean
-make
+time make -j$(nproc)
 cd ..
 ./build/sigmod23ann
