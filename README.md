@@ -18,7 +18,7 @@ Repeat this process as many times as time permits.
 After repeating this process many times, I perform a final step that checks if neighbors of neighbors are nearby.
 
 Space Splitting
-[https://inria.hal.science/inria-00567191/document] provides a comparison of several locality sensitive hashing techniques, a few of which I tried. 
+[Locality sensitive hashing: a comparison of hash function types and querying mechanisms](https://inria.hal.science/inria-00567191/document) provides a comparison of several locality sensitive hashing techniques, a few of which I tried. 
 The best performing methods was K-Means based splitting.
 The method splits the space into a predefined constant number of buckets using the K-means algorithm.
 The process is then repeated recursively until a given bucket size is reached.
@@ -28,8 +28,15 @@ The K-means algorithm requires testing the distance of every point against each 
 When only 2 clusters are used, the two distance evaluations can be replaced with a single dot-product.
 This is because the plane which is equidistant from both points may be precomputed, an a single dot-product is required to determine on which side of the plane a given points lies.
 
+Parallelism:
+All linear algebra was implemented using SIMD intrinsics as can be seen at: https://github.com/parkertimmins/sigmod23ann/blob/main/src/LinearAlgebra.hpp
 
-The code to perform this 2-cluster K-means splitting can be seen at https://github.com/parkertimmins/sigmod23ann/blob/main/src/SolutionKmeans.hpp#L440 . 
+
+
+Navigating Codebase:
+As this code was written for a contest, its a bit messy, with lots of commented out and duplicated code from different versions.
+The constructResult function which does all the work is at: https://github.com/parkertimmins/sigmod23ann/blob/main/src/SolutionKmeans.hpp#L1003
+Perhaps more interestingly, the code to perform this 2-cluster K-means splitting can be seen at https://github.com/parkertimmins/sigmod23ann/blob/main/src/SolutionKmeans.hpp#L440 . 
 
 
 
